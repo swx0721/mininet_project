@@ -4,12 +4,14 @@ policies/load_balance.py — 负载均衡调度器
 实现请求分发策略：
   - "static":       静态入口绑定（Baseline）
   - "round_robin":  轮询调度
+  - "random":       随机选择（用于诊断：区分 RR 实现问题 vs 切换开销问题）
   - 可扩展: 加权轮询、最少连接等
 
 线程安全，支持实验并发请求。
 """
 
 import threading
+import random as _random
 from core.server_cluster import SERVER1_IP, SERVER2_IP, DEFAULT_STATIC_MAPPING
 
 SERVERS = [SERVER1_IP, SERVER2_IP]
@@ -27,7 +29,7 @@ class LoadBalancer:
     def __init__(self, algorithm="static", static_mapping=None):
         """
         参数:
-            algorithm:      "static" | "round_robin"
+            algorithm:      "static" | "round_robin" | "random"
             static_mapping: 静态映射字典（仅 algorithm="static" 时使用）
         """
         self.algorithm = algorithm
@@ -50,6 +52,10 @@ class LoadBalancer:
                 target = SERVERS[self.rr_index % len(SERVERS)]
                 self.rr_index += 1
                 return target
+
+        elif self.algorithm == "random":
+            # 50% 随机选择，无状态，天然线程安全
+            return _random.choice(SERVERS)
 
         else:
             return SERVER1_IP

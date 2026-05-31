@@ -4,11 +4,12 @@ experiments/run_lb_ablation.py — 实验二：负载均衡消融实验
 实验设计:
   Final（QoS + LB + Security） vs  Final − LB（QoS + Security）
 
-实验场景——故意制造服务器负载失衡：
-  静态绑定模式下，4/5 的客户端被绑定到 Server1，仅 1/5 绑定到 Server2。
-  Server1 总请求率 λ=2.4（过载），Server2 总 λ=0.8（中等负载）。
+实验场景——双服务器按区域分工：
+  Server1（10.0.100.2）：财务处、教学楼、办公楼
+  Server2（10.0.101.2）：宿舍区、图书馆
 
-  在此失衡场景下考察：
+  Static 绑定下，各区域固定分配至对应服务器。
+  在此场景下考察：
     1. 无 LB（静态绑定）：Server1 过载 → 响应时延高、吞吐受限
     2. 有 LB（Round Robin）：请求轮流分配 → 50:50 均衡 → 响应降低、吞吐提升
 
@@ -48,24 +49,26 @@ BIGFILE_URL = "/lbfile.bin"
 
 # ==================== 负载均衡消融实验专用静态映射 ====================
 #
-# 设计意图：故意制造服务器负载失衡。
-#   - 4 个客户端（dorm1/lib1/teach1/office1）绑到 Server1
-#   - 1 个客户端（finance1）绑到 Server2
-#   - Server1 总请求率 λ=2.4（过载），Server2 总 λ=0.8（中等）
+# 映射规则（与 DEFAULT_STATIC_MAPPING 一致）：
+#   Server1（10.0.100.2）：财务处、教学楼、办公楼
+#   Server2（10.0.101.2）：宿舍区、图书馆
 #
-# 在这个失衡场景下：
-#   Static 模式 → Server1 严重过载，响应时延高
-#   RR 模式    → 请求均匀分配，显著改善响应时延
+# 负载分布：
+#   Server1 λ 合计 = 0.8 + 0.5 + 0.4 = 1.7 (53%)
+#   Server2 λ 合计 = 1.0 + 0.5       = 1.5 (47%)
+#
+# 注：Static 映射本身已基本均衡；Round Robin 在此基础上进一步消除
+# 由泊松到达随机性引起的瞬时倾斜。
 #
 LB_STATIC_MAPPING = {
-    "dorm1": SERVER1_IP,      # λ=1.0  最高请求率，压到过载端
-    "lib1": SERVER1_IP,       # λ=0.5
-    "teach1": SERVER1_IP,     # λ=0.5
-    "office1": SERVER1_IP,    # λ=0.4
-    "finance1": SERVER2_IP,   # λ=0.8  唯一分到轻载端
+    "finance1": SERVER1_IP,  # λ=0.8  财务处
+    "teach1":   SERVER1_IP,  # λ=0.5  教学楼
+    "office1":  SERVER1_IP,  # λ=0.4  办公楼
+    "dorm1":    SERVER2_IP,  # λ=1.0  宿舍区
+    "lib1":     SERVER2_IP,  # λ=0.5  图书馆
 }
-# Server1 λ 合计 = 1.0 + 0.5 + 0.5 + 0.4 = 2.4 (75%)
-# Server2 λ 合计 = 0.8 (25%)
+# Server1 λ 合计 = 0.8 + 0.5 + 0.4 = 1.7 (53%)
+# Server2 λ 合计 = 1.0 + 0.5       = 1.5 (47%)
 
 CLIENT_NODES = [
     ("dorm1", "宿舍区 (热点)"),
@@ -297,8 +300,8 @@ def run_single_lb_experiment(algorithm, algo_label, duration=60):
 
     info(f"[LB_ABLATION] 开始 {algo_label} 实验...\n")
     if algorithm == "static":
-        info(f"[LB_ABLATION]   静态映射: Server1 ← dorm1/lib1/teach1/office1 (λ=2.4/过载), "
-             f"Server2 ← finance1 (λ=0.8/中等)\n")
+        info(f"[LB_ABLATION]   静态映射: Server1 ← finance1/teach1/office1 (λ=1.7), "
+             f"Server2 ← dorm1/lib1 (λ=1.5)\n")
     results, elapsed = generate_traffic(net, hosts, balancer, duration=duration)
     stats = compute_statistics(results, elapsed, algo_label)
 
@@ -310,22 +313,22 @@ def run_lb_ablation(duration=60):
     """
     运行负载均衡消融实验。
 
-    实验场景——故意制造服务器过载：
-      Static 绑定将 4/5 客户端固定在 Server1（λ=2.4，过载），
-      仅 finance1 分配到 Server2（λ=0.8，中等负载）。
+    实验场景——双服务器按区域分工：
+      Server1：财务处（λ=0.8）、教学楼（λ=0.5）、办公楼（λ=0.4）
+      Server2：宿舍区（λ=1.0）、图书馆（λ=0.5）
 
     对比:
-      1. Final − LB (Static):  静态绑定 → Server1 过载 → 响应高、吞吐受限
-      2. Final (Round Robin):  轮询调度 → 50:50 均衡 → 响应降低、吞吐改善
+      1. Final − LB (Static):  静态绑定 → 各区域固定服务器
+      2. Final (Round Robin):  轮询调度 → 50:50 均衡
 
     消融逻辑:
-      去掉 LB → 服务器过载失衡 → 性能指标劣化
-      加入 LB → 请求均匀分配 → 性能指标恢复
+      去掉 LB → 泊松到达随机性导致瞬时负载倾斜
+      加入 LB → 请求均匀分配 → 响应降低、吞吐改善
     """
     ensure_dirs()
     info("[LB_ABLATION] 开始负载均衡消融实验\n")
-    info("[LB_ABLATION] 失衡场景: Server1 ← 4/5 客户端 (λ=2.4/过载), "
-         "Server2 ← 1/5 客户端 (λ=0.8/中等)\n")
+    info("[LB_ABLATION] 区域分工: Server1 ← finance1/teach1/office1 (λ=1.7), "
+         "Server2 ← dorm1/lib1 (λ=1.5)\n")
 
     # 实验组 1: Final − LB (Static) —— Server1 过载
     static_stats = run_single_lb_experiment("static", "Final − LB (静态绑定→过载)", duration)
@@ -372,9 +375,9 @@ def run_lb_ablation(duration=60):
                 csv_rows)
     save_to_json(f"lb_ablation_{ts}.json",
                  {
-                     "实验设计": "负载均衡消融实验：故意制造服务器过载场景",
-                     "失衡场景": "Server1 ← dorm1/lib1/teach1/office1 (λ=2.4/过载), Server2 ← finance1 (λ=0.8/中等)",
-                     "消融逻辑": "去掉LB→Server1过载性能劣化, 加入RR→50:50均衡性能恢复",
+                     "实验设计": "负载均衡消融实验：区域分工 + 双链路",
+                     "区域分工": "Server1←finance1/teach1/office1 (λ=1.7), Server2←dorm1/lib1 (λ=1.5)",
+                     "消融逻辑": "去掉LB→泊松随机性致瞬时倾斜, 加入RR→50:50均衡消除倾斜",
                      "static": static_stats, "round_robin": rr_stats,
                  },
                  subdir="load_balance")
