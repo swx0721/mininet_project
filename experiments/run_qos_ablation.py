@@ -5,29 +5,31 @@ experiments/run_qos_ablation.py — 实验一：QoS 消融实验
   Final（QoS + LB + Security） vs  Final − QoS（LB + Security）
 
 对比指标:
-  - 关键业务（财务处/人事处）吞吐量
+  - 关键业务（财务处）吞吐量
   - 时延
   - 抖动
   - 丢包率
 
-实现：基于现有 qos_test.py 的三组对比逻辑，适配模型驱动架构。
+实现：基于原版 qos_test.py 的三组对比逻辑，适配模型驱动架构。
+使用 popen() 确保多线程并发流量真实竞争。
 """
 
 import time
 import sys
 import os
 import random
+import re as _re
 import threading
 import json as _json
+import subprocess
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from mininet.log import info
 from utils import save_to_csv, save_to_json, print_separator, timestamp, ensure_dirs
 
-from core.topology import create_fresh_network, BOTTLENECK_BW, SERVER1_IP, SERVER2_IP
+from core.topology import create_fresh_network, SERVER1_IP, SERVER2_IP
 from core.server_cluster import get_server_hosts, DEFAULT_STATIC_MAPPING
-from services.web import start_web_server
 from services.iperf import start_dual_iperf
 from security.acl import (
     apply_stateful_firewall, apply_acl_policies,
@@ -50,14 +52,19 @@ COMPETING_CLIENTS = [
     ("finance_probe", DEFAULT_STATIC_MAPPING["finance_probe"], "财务处 (UDP探针)", "入口1", 5204, "udp", 1),
 ]
 
-POISSON_LAMBDA = {
-    "finance1": 0.5, "teach1": 0.4, "office1": 0.4,
-    "dorm1": 0.4, "lib1": 0.3, "finance_probe": 0.25,
+# 主机别名：finance_probe 与 finance1 共用同一个 Mininet 节点
+CLIENT_HOSTS = {
+    "finance_probe": "finance1",
 }
 
 CLIENT_IPS = {
     "dorm1": "10.0.1.2", "teach1": "10.0.2.2", "lib1": "10.0.3.2",
     "office1": "10.0.4.2", "finance1": "10.0.5.2",
+}
+
+POISSON_LAMBDA = {
+    "finance1": 0.5, "teach1": 0.4, "office1": 0.4,
+    "dorm1": 0.4, "lib1": 0.3, "finance_probe": 0.25,
 }
 
 FLOW_DURATION = 5
@@ -66,49 +73,102 @@ PING_COUNT = 10
 PING_INTERVAL = 0.2
 
 
-def parse_iperf_output(result):
-    try:
-        start = result.find("{")
-        end = result.rfind("}")
-        if start < 0 or end < start:
-            return None
-        data = _json.loads(result[start:end + 1])
-        if data.get("error"):
-            return None
-        end_data = data.get("end", {})
-        for key in ("sum_received", "sum_sent", "sum"):
-            c = end_data.get(key)
-            if c and c.get("bits_per_second") is not None:
-                return c["bits_per_second"] / 1_000_000
-    except Exception:
+def get_iperf_port(client_spec):
+    return client_spec[4]
+
+def get_protocol(client_spec):
+    return client_spec[5]
+
+def get_target_bw(client_spec):
+    return client_spec[6]
+
+
+# ==================== 输出解析 ====================
+
+
+
+def _extract_iperf_json(output):
+    """
+    从混杂了 stderr / shell 日志的输出中安全提取 JSON。
+
+    iperf3 在连接失败时会在 JSON 后面追加错误信息：
+      {...json...}\niperf3: error - unable to send control message: Bad file descriptor
+
+    只用 JSON 部分，忽略后面的错误日志。
+    """
+    if not output:
         return None
+    # 找到第一个 { 和最后一个 } 之间的内容
+    match = _re.search(r'\{.*\}', output, _re.DOTALL)
+    if not match:
+        return None
+    try:
+        return _json.loads(match.group())
+    except (_json.JSONDecodeError, ValueError):
+        return None
+
+
+def parse_iperf_output(result):
+    """从 iperf3 JSON 解析 TCP 吞吐量 (Mbps)。"""
+    data = _extract_iperf_json(result)
+    if data is None:
+        return None
+
+    if data.get("error"):
+        return None
+
+    end_data = data.get("end")
+    if not end_data:
+        return None
+
+    # 尝试多个可能的吞吐量字段
+    for key in ("sum_received", "sum_sent", "sum"):
+        c = end_data.get(key)
+        if c and c.get("bits_per_second") is not None:
+            return c["bits_per_second"] / 1_000_000
+
+    # 回退：使用最后一个 interval 的 sum
+    intervals = data.get("intervals", [])
+    if intervals:
+        last = intervals[-1].get("sum", {})
+        if last.get("bits_per_second") is not None:
+            return last["bits_per_second"] / 1_000_000
+
     return None
 
 
 def parse_udp_iperf_output(result):
-    try:
-        start = result.find("{")
-        end = result.rfind("}")
-        if start < 0 or end < start:
-            return None
-        data = _json.loads(result[start:end + 1])
-        if data.get("error"):
-            return None
-        end_data = data.get("end", {})
-        for key in ("sum_received", "sum", "sum_sent"):
-            c = end_data.get(key)
-            if c and c.get("bits_per_second") is not None:
-                return {
-                    "throughput_mbps": c["bits_per_second"] / 1_000_000,
-                    "jitter_ms": c.get("jitter_ms", 0),
-                    "lost_percent": c.get("lost_percent", 0),
-                }
-    except Exception:
+    """从 iperf3 UDP JSON 解析吞吐量、抖动和丢包率。"""
+    data = _extract_iperf_json(result)
+    if data is None:
         return None
-    return None
+
+    if data.get("error"):
+        return None
+
+    end_data = data.get("end")
+    if not end_data:
+        return None
+
+    sum_data = None
+    for candidate_key in ("sum_received", "sum", "sum_sent"):
+        candidate = end_data.get(candidate_key)
+        if candidate and candidate.get("bits_per_second") is not None:
+            sum_data = candidate
+            break
+
+    if not sum_data:
+        return None
+
+    return {
+        "throughput_mbps": sum_data["bits_per_second"] / 1_000_000,
+        "jitter_ms": sum_data.get("jitter_ms", 0),
+        "lost_percent": sum_data.get("lost_percent", 0),
+    }
 
 
 def parse_ping_output(result):
+    """从 ping 输出解析平均 RTT (ms)。"""
     try:
         for line in result.split("\n"):
             if "avg" in line and "/" in line:
@@ -122,166 +182,298 @@ def parse_ping_output(result):
     return None
 
 
-def setup_network_for_policy(policy_type, bottleneck_bw):
-    """创建网络并应用指定 QoS 策略 + 安全。"""
+# ==================== 网络搭建 ====================
+
+def setup_network_for_policy(policy_type):
+    """创建网络并应用指定 QoS 策略 + 安全（不启动 iperf3）。"""
     import os as _os
     _os.system("mn -c 2>/dev/null")
 
     net, r1, hosts, switches = create_fresh_network()
-    server1, server2 = get_server_hosts(hosts)
 
-    # 服务
-    if server1:
-        start_web_server(server1)
-    start_dual_iperf(server1, server2)
-
-    # 安全（ACL + IDS）
+    # 安全（Final 模型的安全体系）
     apply_default_accept(r1)
     apply_stateful_firewall(r1)
     apply_acl_policies(r1)
     apply_intrusion_detection(r1)
     init_db(r1)
 
-    # QoS 策略
+    # QoS 策略（各区域上行链路独立调度）
+    clear_qos(r1)
     if policy_type == "baseline":
-        apply_baseline_policy(r1, bottleneck_bw=bottleneck_bw)
+        apply_baseline_policy(r1)
     elif policy_type == "htb":
-        apply_htb_policy(r1, bottleneck_bw=bottleneck_bw)
+        apply_htb_policy(r1)
 
     return net, r1, hosts
 
 
-def run_client_traffic(net, hosts, client_spec, results, lock):
-    """运行单个客户端流量生成。"""
-    client_name = client_spec[0]
-    target_ip = client_spec[1]
-    protocol = client_spec[5]
-    port = client_spec[4]
-    target_bw = client_spec[6]
+# ==================== 动态流量生成（popen 并发模式）====================
 
-    client = hosts.get(client_name)
-    CLIENT_HOSTS_MAP = {"finance_probe": "finance1"}
-    actual_node = client or hosts.get(CLIENT_HOSTS_MAP.get(client_name))
+def run_competitive_measurement(net, hosts, duration):
+    """
+    使用 popen() 实现真正的多线程并发 iperf3 流量竞争。
+    每个客户端线程通过 popen + communicate 独立运行 iperf3，
+    确保同一主机上的多个流（如 finance1 TCP + finance_probe UDP）可以并发执行。
+    """
+    # 启动两个服务入口的 iperf3
+    server1, server2 = get_server_hosts(hosts)
+    if server1 and server2:
+        # 统一清理残留进程（在先启动服务器之前做一次）
+        server1.cmd("pkill -f iperf3 2>/dev/null || true")
+        server2.cmd("pkill -f iperf3 2>/dev/null || true")
+        time.sleep(1.5)
 
-    if actual_node is None:
-        return
+        # 启动 iperf3 服务（start_dual_iperf 内部已处理 skip_kill 逻辑）
+        start_dual_iperf(server1, server2)
+        # 充分等待服务就绪
+        time.sleep(3)
 
-    end_time = time.time() + TOTAL_EXPERIMENT_TIME
-    while time.time() < end_time:
-        delay = random.expovariate(POISSON_LAMBDA.get(client_name, 0.3))
-        if time.time() + delay >= end_time:
-            break
-        time.sleep(delay)
+    results_lock = threading.Lock()
+    flow_samples = {client_spec[0]: [] for client_spec in COMPETING_CLIENTS}
+    end_time = time.time() + duration
 
-        if protocol == "tcp":
-            cmd = f"iperf3 -c {target_ip} -p {port} -t {FLOW_DURATION} -J 2>/dev/null"
-        else:
-            cmd = f"iperf3 -c {target_ip} -p {port} -u -b {target_bw}M -t {FLOW_DURATION} -J 2>/dev/null"
+    def run_iperf(client, cmd):
+        """用 popen 运行 iperf，允许同一主机上多流并发。"""
+        proc = client.popen(
+            cmd, shell=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+        )
+        output, _ = proc.communicate()
+        return output or ""
 
-        output = actual_node.cmd(cmd)
+    def build_iperf_cmd(target_ip, port, protocol, target_bw):
+        if protocol == "udp":
+            bw = random.randint(6, 9)
+            return f"iperf3 -c {target_ip} -p {port} -t {FLOW_DURATION} -u -b {bw}M -J 2>/dev/null"
+        # TCP 不限速；stderr 重定向到 /dev/null，只保留 JSON stdout
+        return f"iperf3 -c {target_ip} -p {port} -t {FLOW_DURATION} -J 2>/dev/null"
 
-        if protocol == "tcp":
-            tp = parse_iperf_output(output)
-            if tp is not None:
-                with lock:
-                    results.append({"client": client_name, "protocol": "tcp",
-                                    "throughput_mbps": tp})
-        else:
-            udp = parse_udp_iperf_output(output)
-            if udp is not None:
-                with lock:
-                    results.append({
-                        "client": client_name, "protocol": "udp",
-                        "throughput_mbps": udp["throughput_mbps"],
-                        "jitter_ms": udp["jitter_ms"],
-                        "lost_percent": udp["lost_percent"],
-                    })
+    def parse_flow_result(result, protocol):
+        if protocol == "udp":
+            return parse_udp_iperf_output(result)
+        tp = parse_iperf_output(result)
+        return {"throughput_mbps": tp} if tp is not None else None
 
+    def run_client_poisson(client_name, target_ip, port, desc, protocol, target_bw):
+        """持续泊松到达：实验窗口内反复产生短流。"""
+        host_name = CLIENT_HOSTS.get(client_name, client_name)
+        client = hosts.get(host_name)
+        if client is None:
+            return
+        flow_index = 0
 
-def measure_latency(net, hosts, client_spec, results, lock):
-    """测量时延。"""
-    client_name = client_spec[0]
-    ip = CLIENT_IPS.get(client_name)
-    if ip is None:
-        return
+        while time.time() < end_time:
+            delay = random.expovariate(POISSON_LAMBDA[client_name])
+            if time.time() + delay >= end_time:
+                break
+            time.sleep(delay)
 
-    client = hosts.get(client_name)
-    if client is None:
-        return
+            cmd = build_iperf_cmd(target_ip, port, protocol, target_bw)
+            flow_index += 1
 
-    time.sleep(TOTAL_EXPERIMENT_TIME // 2)
-    output = client.cmd(f"ping -c {PING_COUNT} -i {PING_INTERVAL} {SERVER1_IP}")
-    rtt = parse_ping_output(output)
-    if rtt is not None:
-        with lock:
-            results.append({"client": client_name, "protocol": "ping", "rtt_ms": rtt})
+            result = run_iperf(client, cmd)
+            parsed = parse_flow_result(result, protocol)
 
+            # 连接失败时重试一次（短暂等待后）
+            if not parsed and (not result or "error" in result.lower()):
+                time.sleep(1)
+                result = run_iperf(client, cmd)
+                parsed = parse_flow_result(result, protocol)
 
-def run_single_policy_experiment(policy_type, label, bottleneck_bw):
-    """运行单个 QoS 策略实验。"""
-    info(f"\n{'='*60}\n")
-    info(f"  实验: {label}\n")
-    info(f"{'='*60}\n")
-
-    net, r1, hosts = setup_network_for_policy(policy_type, bottleneck_bw)
-
-    traffic_results = []
-    latency_results = []
-    lock = threading.Lock()
+            with results_lock:
+                if parsed:
+                    flow_samples[client_name].append(parsed)
+                    if protocol == "udp":
+                        info(f"  [DONE] {desc} #{flow_index}: "
+                             f"{parsed['throughput_mbps']:.2f} Mbps, "
+                             f"抖动 {parsed['jitter_ms']:.2f} ms, "
+                             f"丢包 {parsed['lost_percent']:.2f}%\n")
+                    else:
+                        info(f"  [DONE] {desc} #{flow_index}: "
+                             f"{parsed['throughput_mbps']:.2f} Mbps\n")
+                else:
+                    info(f"  [DONE] {desc} #{flow_index}: 解析失败 "
+                         f"(目标={target_ip}:{port}, 协议={protocol})\n")
 
     threads = []
-    for spec in COMPETING_CLIENTS:
-        t = threading.Thread(target=run_client_traffic,
-                             args=(net, hosts, spec, traffic_results, lock))
-        threads.append(t)
-        t2 = threading.Thread(target=measure_latency,
-                              args=(net, hosts, spec, latency_results, lock))
-        threads.append(t2)
+    for client_spec in COMPETING_CLIENTS:
+        client_name, target_ip, desc, entrance = client_spec[:4]
+        port = get_iperf_port(client_spec)
+        protocol = get_protocol(client_spec)
+        target_bw = get_target_bw(client_spec)
 
+        t = threading.Thread(
+            target=run_client_poisson,
+            args=(client_name, target_ip, port, desc, protocol, target_bw),
+            daemon=True
+        )
+        threads.append(t)
+
+    random.shuffle(threads)
+
+    info(f"[QOS_ABLATION] 启动 {len(threads)} 个客户端泊松流生成器，持续 {duration}s...\n")
     for t in threads:
         t.start()
     for t in threads:
         t.join()
 
-    net.stop()
+    # 汇总结果
+    results = {}
+    for client_spec in COMPETING_CLIENTS:
+        client_name = client_spec[0]
+        protocol = get_protocol(client_spec)
+        samples = flow_samples.get(client_name, [])
+        if not samples:
+            results[client_name] = None
+            continue
 
-    # 汇总
-    summary = {}
-    for r in traffic_results:
-        key = r["client"]
-        if key not in summary:
-            summary[key] = {"throughputs": [], "jitters": [], "losses": []}
-        summary[key]["throughputs"].append(r.get("throughput_mbps", 0))
-        if r.get("jitter_ms") is not None:
-            summary[key]["jitters"].append(r["jitter_ms"])
-        if r.get("lost_percent") is not None:
-            summary[key]["losses"].append(r["lost_percent"])
-
-    for r in latency_results:
-        key = r["client"]
-        if key not in summary:
-            summary[key] = {"throughputs": [], "jitters": [], "losses": [], "rtts": []}
-        if "rtts" not in summary[key]:
-            summary[key]["rtts"] = []
-        summary[key]["rtts"].append(r["rtt_ms"])
-
-    # 计算平均值
-    aggregated = {}
-    for client, vals in summary.items():
-        tps = vals["throughputs"]
-        rtts = vals.get("rtts", [])
-        jitters = vals.get("jitters", [])
-        losses = vals.get("losses", [])
-
-        aggregated[client] = {
-            "throughput_mbps": round(sum(tps) / len(tps), 2) if tps else 0,
-            "rtt_ms": round(sum(rtts) / len(rtts), 2) if rtts else 0,
-            "jitter_ms": round(sum(jitters) / len(jitters), 2) if jitters else None,
-            "lost_percent": round(sum(losses) / len(losses), 2) if losses else None,
+        results[client_name] = {
+            "throughput_mbps": round(
+                sum(s["throughput_mbps"] for s in samples) / len(samples), 2
+            ),
+            "flow_count": len(samples),
         }
+        if protocol == "udp":
+            results[client_name]["jitter_ms"] = round(
+                sum(s["jitter_ms"] for s in samples) / len(samples), 2
+            )
+            results[client_name]["lost_percent"] = round(
+                sum(s["lost_percent"] for s in samples) / len(samples), 2
+            )
+
+    info(f"[QOS_ABLATION] 所有客户端泊松流测试完成\n")
+    return results
+
+
+# ==================== 时延测量（拥塞期并发）====================
+
+def run_latency_measurement(net, hosts, measure_after=2):
+    """
+    在拥塞期间测量各客户端到服务器的时延。
+    使用 CLIENT_HOSTS 别名映射，确保 finance_probe 正确测到 finance1 的 RTT。
+    """
+    info("[QOS_ABLATION] 等待拥塞稳定后测量时延...\n")
+    time.sleep(measure_after)
+
+    results_lock = threading.Lock()
+    latencies = {}
+
+    def ping_one(client_name, desc):
+        host_name = CLIENT_HOSTS.get(client_name, client_name)
+        client = hosts.get(host_name)
+        if client is None:
+            return
+        result = client.cmd(f"ping -c {PING_COUNT} -i {PING_INTERVAL} {SERVER1_IP}")
+        rtt = parse_ping_output(result)
+        with results_lock:
+            latencies[client_name] = rtt
+        if rtt is not None:
+            info(f"  [PING] {desc}: 平均 {rtt:.2f} ms\n")
+        else:
+            info(f"  [PING] {desc}: 解析失败\n")
+
+    threads = []
+    measured_hosts = set()
+    alias_clients = []
+
+    for client_spec in COMPETING_CLIENTS:
+        client_name, _, desc, _ = client_spec[:4]
+        host_name = CLIENT_HOSTS.get(client_name, client_name)
+        if host_name in measured_hosts:
+            alias_clients.append((client_name, host_name, desc))
+            continue
+        measured_hosts.add(host_name)
+        t = threading.Thread(target=ping_one, args=(client_name, desc), daemon=True)
+        threads.append(t)
+        t.start()
+
+    for t in threads:
+        t.join()
+
+    # 别名客户端复用同一主机的 RTT
+    for client_name, host_name, desc in alias_clients:
+        latencies[client_name] = latencies.get(host_name)
+        if latencies[client_name] is not None:
+            info(f"  [PING] {desc}: 复用 {host_name} RTT {latencies[client_name]:.2f} ms\n")
+
+    return latencies
+
+
+def run_competition_with_latency(net, hosts, duration):
+    """同时运行竞争流量和 ping，确保 RTT 测到的是拥塞期数据。"""
+    traffic_results = {}
+
+    # 在开始之前检查网络连通性
+    server1, server2 = get_server_hosts(hosts)
+    if server1 and server2:
+        # 从任意客户端主机 ping 服务器，确保路由正常
+        test_client = hosts.get("dorm1")
+        if test_client:
+            info("[QOS_ABLATION] 检查网络连通性...\n")
+            result = test_client.cmd(f"ping -c 2 {SERVER1_IP} 2>&1")
+            if "0% packet loss" in result or "0 packets lost" in result:
+                info("[QOS_ABLATION] ✓ 网络连通性正常\n")
+            else:
+                info("[QOS_ABLATION] ⚠ 网络连通性异常，可能导致 iperf3 失败\n")
+                info(f"[QOS_ABLATION] Ping 结果: {result[:200]}\n")
+
+    def traffic_worker():
+        nonlocal traffic_results
+        traffic_results = run_competitive_measurement(net, hosts, duration)
+
+    traffic_thread = threading.Thread(target=traffic_worker, daemon=True)
+    traffic_thread.start()
+
+    latency_results = run_latency_measurement(net, hosts, measure_after=2)
+    traffic_thread.join()
+
+    return traffic_results, latency_results
+
+
+# ==================== 单策略实验 ====================
+
+def run_single_policy_experiment(policy_type, label):
+    """运行单个 QoS 策略实验。"""
+    info(f"\n{'='*60}\n")
+    info(f"  实验: {label}\n")
+    info(f"{'='*60}\n")
+
+    net, r1, hosts = setup_network_for_policy(policy_type)
+
+    try:
+        traffic_results, latency_results = run_competition_with_latency(
+            net, hosts, TOTAL_EXPERIMENT_TIME
+        )
+    finally:
+        net.stop()
+
+    # 汇总为聚合格式
+    aggregated = {}
+    for client_spec in COMPETING_CLIENTS:
+        client_name = client_spec[0]
+        tp = traffic_results.get(client_name)
+        lat = latency_results.get(client_name)
+
+        if tp is not None:
+            aggregated[client_name] = {
+                "throughput_mbps": tp["throughput_mbps"],
+                "rtt_ms": round(lat, 2) if lat is not None else 0,
+                "jitter_ms": tp.get("jitter_ms"),
+                "lost_percent": tp.get("lost_percent"),
+            }
+        else:
+            aggregated[client_name] = {
+                "throughput_mbps": 0,
+                "rtt_ms": round(lat, 2) if lat is not None else 0,
+                "jitter_ms": None,
+                "lost_percent": None,
+            }
 
     return aggregated, label
 
+
+# ==================== 主入口 ====================
 
 def run_qos_ablation(server_ip="10.0.100.2", duration=None):
     """
@@ -298,11 +490,9 @@ def run_qos_ablation(server_ip="10.0.100.2", duration=None):
     ensure_dirs()
     info("[QOS_ABLATION] 开始 QoS 消融实验\n")
 
-    bw = BOTTLENECK_BW
-
     # 实验组 1: Final − QoS (Baseline)
     baseline_data, baseline_label = run_single_policy_experiment(
-        "baseline", "Final − QoS (Baseline/pfifo)", bw
+        "baseline", "Final − QoS (Baseline/pfifo)"
     )
 
     # 清理
@@ -312,7 +502,7 @@ def run_qos_ablation(server_ip="10.0.100.2", duration=None):
 
     # 实验组 2: Final (HTB QoS)
     htb_data, htb_label = run_single_policy_experiment(
-        "htb", "Final (HTB QoS)", bw
+        "htb", "Final (HTB QoS)"
     )
 
     # 输出对比结果
@@ -335,28 +525,44 @@ def run_qos_ablation(server_ip="10.0.100.2", duration=None):
         b = baseline_data.get(client_key, {})
         h = htb_data.get(client_key, {})
 
-        info(f"[Baseline] {label:<20} tcp     "
-             f"{b.get('throughput_mbps', 0):<14.2f} "
-             f"{b.get('rtt_ms', 0):<12.2f} "
-             f"{b.get('jitter_ms') or 'N/A':<12} "
-             f"{b.get('lost_percent') or 'N/A':<12}\n")
+        b_tp = b.get("throughput_mbps", 0) if b else 0
+        b_rtt = b.get("rtt_ms", 0) if b else 0
+        b_jit = b.get("jitter_ms") if b else None
+        b_loss = b.get("lost_percent") if b else None
 
-        info(f"[HTB QoS]  {label:<20} tcp     "
-             f"{h.get('throughput_mbps', 0):<14.2f} "
-             f"{h.get('rtt_ms', 0):<12.2f} "
-             f"{h.get('jitter_ms') or 'N/A':<12} "
-             f"{h.get('lost_percent') or 'N/A':<12}\n")
+        h_tp = h.get("throughput_mbps", 0) if h else 0
+        h_rtt = h.get("rtt_ms", 0) if h else 0
+        h_jit = h.get("jitter_ms") if h else None
+        h_loss = h.get("lost_percent") if h else None
+
+        protocol = "tcp"
+        for spec in COMPETING_CLIENTS:
+            if spec[0] == client_key:
+                protocol = spec[5]
+                break
+
+        info(f"[Baseline] {label:<20} {protocol:<6} "
+             f"{b_tp:<14.2f} {b_rtt:<12.2f} "
+             f"{b_jit if b_jit is not None else 'N/A':<12} "
+             f"{b_loss if b_loss is not None else 'N/A':<12}\n")
+
+        info(f"[HTB QoS]  {label:<20} {protocol:<6} "
+             f"{h_tp:<14.2f} {h_rtt:<12.2f} "
+             f"{h_jit if h_jit is not None else 'N/A':<12} "
+             f"{h_loss if h_loss is not None else 'N/A':<12}\n")
         info("-" * 90 + "\n")
 
         csv_rows.append([
-            f"[Baseline] {label}", "tcp",
-            b.get("throughput_mbps", 0), b.get("rtt_ms", 0),
-            b.get("jitter_ms") or "N/A", b.get("lost_percent") or "N/A",
+            f"[Baseline] {label}", protocol,
+            b_tp, b_rtt,
+            b_jit if b_jit is not None else "N/A",
+            b_loss if b_loss is not None else "N/A",
         ])
         csv_rows.append([
-            f"[HTB QoS] {label}", "tcp",
-            h.get("throughput_mbps", 0), h.get("rtt_ms", 0),
-            h.get("jitter_ms") or "N/A", h.get("lost_percent") or "N/A",
+            f"[HTB QoS] {label}", protocol,
+            h_tp, h_rtt,
+            h_jit if h_jit is not None else "N/A",
+            h_loss if h_loss is not None else "N/A",
         ])
 
     # 保存

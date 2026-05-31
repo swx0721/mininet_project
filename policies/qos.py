@@ -1,140 +1,114 @@
 """
 policies/qos.py — QoS 流量控制策略
 
-实现 HTB（Hierarchy Token Bucket）队列调度：
-  - 财务处(10.0.5.0/24) 和 人事处(10.0.6.0/24)：高优先级 + 保底带宽
-  - 普通业务（其余 TCP）：中等优先级
-  - 宿舍区 UDP 视频流：最低优先级
-  - 出口 r1-eth5 总限速 35Mbps
+QoS 作用位置：各区域交换机 → 核心路由器的上行链路（r1-eth0 ~ r1-eth4, r1-eth7）
+  - 每个区域上行链路独立限速与分类
+  - 财务处/人事处获得较高带宽保障
+  - 宿舍区获得较低带宽限制
+  - 服务器链路（r1-eth5, r1-eth6）不参与 QoS，保持独立对称
 
 三种策略:
-  1. baseline_policy:  pfifo FIFO（无 QoS）
-  2. prio_policy:      严格优先级队列
-  3. htb_policy:       HTB 分层 + sfq 公平队列（默认 QoS 策略）
+  1. baseline_policy:  pfifo FIFO（无 QoS，仅拓扑级带宽）
+  2. htb_policy:       HTB 分层 + sfq 公平队列（默认 QoS 策略）
 """
 
 from mininet.log import info
-from core.topology import SERVER_INTF, BOTTLENECK_BW
+from core.topology import ZONE_UPLINKS, ZONE_BASELINE_BW
+
+
+# ==================== 各区域 QoS 配置 ====================
+
+# 区域 → 上行接口映射
+ZONE_INTF_MAP = {
+    "r1-eth0": "dorm",
+    "r1-eth1": "teach",
+    "r1-eth2": "lib",
+    "r1-eth3": "office",
+    "r1-eth4": "finance",
+    "r1-eth7": "hr",
+}
+
+# HTB QoS 各区域带宽分配（Mbps）
+#   finance/hr: 保底 80% 拓扑带宽（关键业务保障）
+#   teach/lib/office: 保底 70% 拓扑带宽
+#   dorm: 保底 60% 拓扑带宽（视频流限速）
+HTB_RATE_RATIO = {
+    "finance": 0.80,
+    "hr":      0.80,
+    "office":  0.70,
+    "teach":   0.70,
+    "lib":     0.70,
+    "dorm":    0.60,
+}
+
+
+def _clear_interface_qos(r1, intf):
+    """清除单个接口的 tc qdisc。"""
+    r1.cmd(f"tc qdisc del dev {intf} root 2>/dev/null || true")
 
 
 def apply_baseline_policy(r1, bottleneck_bw=None):
     """
-    Baseline：pfifo FIFO 队列（无优先级）。
+    Baseline：各区域上行链路保持拓扑级带宽，仅附加 pfifo。
 
-    在瓶颈链路 r1-eth5 上：
-      1. HTB 总出口限制
-      2. pfifo 纯 FIFO 队列
+    QoS 消融实验中作为"去掉 QoS"的对照组：
+      各区域流量按其拓扑带宽自然竞争，无额外优先级或限速。
     """
-    bw = bottleneck_bw if bottleneck_bw is not None else BOTTLENECK_BW
-    intf = SERVER_INTF
+    info(f"[QOS] 配置 Baseline (pfifo): 各区域上行链路拓扑带宽, 无优先级\n")
 
-    info(f"[QOS] 配置 Baseline (pfifo): {intf}={bw}Mbps, 无优先级\n")
+    for intf in ZONE_UPLINKS:
+        zone = ZONE_INTF_MAP[intf]
+        bw = ZONE_BASELINE_BW[intf]
+        _clear_interface_qos(r1, intf)
+        r1.cmd(f"tc qdisc add dev {intf} root handle 1: htb default 1")
+        r1.cmd(f"tc class add dev {intf} parent 1: classid 1:1 "
+               f"htb rate {bw}mbit ceil {bw}mbit")
+        r1.cmd(f"tc qdisc add dev {intf} parent 1:1 handle 10: pfifo limit 1000")
+        info(f"  [QOS] {intf} ({zone}): {bw}Mbps pfifo\n")
 
-    r1.cmd(f"tc qdisc del dev {intf} root 2>/dev/null || true")
-    r1.cmd(f"tc qdisc add dev {intf} root handle 1: htb default 1")
-    r1.cmd(f"tc class add dev {intf} parent 1: classid 1:1 "
-           f"htb rate {bw}mbit ceil {bw}mbit")
-    r1.cmd(f"tc qdisc add dev {intf} parent 1:1 handle 10: pfifo limit 1000")
-
-    info(f"[QOS] Baseline 已生效: {intf} {bw}Mbps, pfifo\n")
-
-
-def apply_prio_policy(r1, bottleneck_bw=None):
-    """
-    QoS：prio 严格优先级队列。
-
-    在瓶颈链路 r1-eth5 上：
-      - 财务处 + 人事处 → band 0（最高优先级）
-      - 其余流量 → band 1（普通）
-
-    严格优先级：band 0 有包时不服务 band 1。
-    """
-    bw = bottleneck_bw if bottleneck_bw is not None else BOTTLENECK_BW
-    intf = SERVER_INTF
-
-    info(f"[QOS] 配置 prio QoS: 严格优先级调度\n")
-
-    r1.cmd(f"tc qdisc del dev {intf} root 2>/dev/null || true")
-
-    qos_rate = bw - 5
-    r1.cmd(f"tc qdisc add dev {intf} root handle 1: htb default 1")
-    r1.cmd(f"tc class add dev {intf} parent 1: classid 1:1 "
-           f"htb rate {qos_rate}mbit ceil {bw}mbit")
-
-    r1.cmd(f"tc qdisc add dev {intf} parent 1:1 handle 10: prio bands 2")
-
-    # 财务处 + 人事处 → band 0（高优先级）
-    r1.cmd(f"tc filter add dev {intf} parent 10: protocol ip prio 1 u32 "
-           f"match ip src 10.0.5.0/24 flowid 10:1")
-    r1.cmd(f"tc filter add dev {intf} parent 10: protocol ip prio 2 u32 "
-           f"match ip src 10.0.6.0/24 flowid 10:1")
-    # 其余 → band 1
-    r1.cmd(f"tc filter add dev {intf} parent 10: protocol ip prio 10 u32 "
-           f"match ip src 0.0.0.0/0 flowid 10:2")
-
-    info(f"[QOS] prio QoS 已生效: ceil={bw}Mbps, 财务+人事→band 0\n")
+    info(f"[QOS] Baseline 已生效: {len(ZONE_UPLINKS)} 条区域上行链路, pfifo\n")
 
 
 def apply_htb_policy(r1, bottleneck_bw=None):
     """
-    QoS：HTB 分层 + 软优先级（保底带宽 + sfq 公平队列）。
+    QoS：各区域上行链路 HTB 分层调度。
 
-    在瓶颈链路 r1-eth5 上：
-        class 1:10 — 财务处 + 人事处: rate=12Mbps, ceil=35Mbps, prio=0（最高）
-        class 1:20 — 普通业务（其余TCP）: rate=15Mbps, ceil=28Mbps, prio=1
-        class 1:30 — UDP/背景流（宿舍区）: rate=6Mbps, ceil=20Mbps, prio=2（最低）
-        三层 rate 合计 33Mbps < 总出口 35Mbps（欠分配预留借用空间）
+    每条区域上行链路独立配置 HTB：
+      - 根类速率 = 拓扑带宽 × HTB_RATE_RATIO（欠分配，预留突发空间）
+      - ceil = 拓扑带宽
+      - 队列类型: sfq 公平队列（防同区域 TCP 流踩踏）
 
-    每个子类附加 sfq 防 TCP 踩踏。
+    优先级通过各区域的 rate/ceil 比例隐式实现：
+      - finance/hr: 80% 拓扑带宽保障
+      - dorm: 60% 拓扑带宽（视频流受限）
     """
-    bw = bottleneck_bw if bottleneck_bw is not None else BOTTLENECK_BW
-    intf = SERVER_INTF
+    info(f"[QOS] 配置 HTB QoS: 各区域上行链路独立调度\n")
 
-    info(f"[QOS] 配置 HTB QoS: 分层 + 软优先级（保底带宽 + sfq）\n")
+    for intf in ZONE_UPLINKS:
+        zone = ZONE_INTF_MAP[intf]
+        topo_bw = ZONE_BASELINE_BW[intf]
+        ratio = HTB_RATE_RATIO.get(zone, 0.70)
+        rate = int(topo_bw * ratio)
+        ceil = topo_bw
 
-    r1.cmd(f"tc qdisc del dev {intf} root 2>/dev/null || true")
+        _clear_interface_qos(r1, intf)
 
-    # 根 HTB
-    r1.cmd(f"tc qdisc add dev {intf} root handle 1: htb default 20")
-    r1.cmd(f"tc class add dev {intf} parent 1: classid 1:1 "
-           f"htb rate {bw}mbit ceil {bw}mbit")
+        r1.cmd(f"tc qdisc add dev {intf} root handle 1: htb default 10")
+        r1.cmd(f"tc class add dev {intf} parent 1: classid 1:1 "
+               f"htb rate {rate}mbit ceil {ceil}mbit")
+        r1.cmd(f"tc qdisc add dev {intf} parent 1:1 handle 10: sfq perturb 10")
 
-    # class 1:10 — 财务处 + 人事处（高优先级 + 保底）
-    r1.cmd(f"tc class add dev {intf} parent 1:1 classid 1:10 htb "
-           f"rate 12mbit ceil {bw}mbit prio 0")
-    r1.cmd(f"tc qdisc add dev {intf} parent 1:10 handle 10: sfq perturb 10")
+        info(f"  [QOS] {intf} ({zone}): rate={rate}Mbps ceil={ceil}Mbps "
+             f"(拓扑={topo_bw}Mbps, ratio={ratio:.0%}) sfq\n")
 
-    # class 1:20 — 普通业务（中等优先级）
-    r1.cmd(f"tc class add dev {intf} parent 1:1 classid 1:20 htb "
-           f"rate 15mbit ceil 28mbit prio 1")
-    r1.cmd(f"tc qdisc add dev {intf} parent 1:20 handle 20: sfq perturb 10")
-
-    # class 1:30 — UDP/背景流（最低优先级）
-    r1.cmd(f"tc class add dev {intf} parent 1:1 classid 1:30 htb "
-           f"rate 6mbit ceil 20mbit prio 2")
-    r1.cmd(f"tc qdisc add dev {intf} parent 1:30 handle 30: sfq perturb 10")
-
-    # 过滤器
-    r1.cmd(f"tc filter add dev {intf} parent 1: protocol ip prio 1 u32 "
-           f"match ip src 10.0.5.0/24 flowid 1:10")
-    r1.cmd(f"tc filter add dev {intf} parent 1: protocol ip prio 2 u32 "
-           f"match ip src 10.0.6.0/24 flowid 1:10")
-    r1.cmd(f"tc filter add dev {intf} parent 1: protocol ip prio 3 u32 "
-           f"match ip src 10.0.1.0/24 flowid 1:30")
-    r1.cmd(f"tc filter add dev {intf} parent 1: protocol ip prio 10 u32 "
-           f"match ip src 0.0.0.0/0 flowid 1:20")
-
-    info(f"[QOS] HTB QoS 已生效: {intf} {bw}Mbps\n"
-         f"      财务+人事→class 1:10 rate=12Mbps ceil={bw}Mbps prio=0\n"
-         f"      普通业务→class 1:20 rate=15Mbps ceil=28Mbps prio=1\n"
-         f"      宿舍UDP→class 1:30 rate=6Mbps ceil=20Mbps prio=2\n"
-         f"      三层合计 33Mbps < {bw}Mbps（欠分配）\n")
+    info(f"[QOS] HTB QoS 已生效: {len(ZONE_UPLINKS)} 条区域上行链路\n"
+         f"      finance/hr → 80% 带宽保障 | dorm → 60% 限速 | 其余 → 70%\n")
 
 
 def clear_qos(r1):
-    """清除所有 QoS 配置。"""
+    """清除所有 QoS 配置（含服务器链路）。"""
     info("[QOS] 清除所有 QoS 配置...\n")
-    for dev in [f"r1-eth{i}" for i in range(7)]:
+    for dev in [f"r1-eth{i}" for i in range(8)]:
         r1.cmd(f"tc qdisc del dev {dev} root 2>/dev/null || true")
     r1.cmd("iptables -t mangle -F 2>/dev/null || true")
     info("[QOS] QoS 配置已清除\n")

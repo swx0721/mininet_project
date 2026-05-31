@@ -4,8 +4,16 @@ experiments/run_lb_ablation.py — 实验二：负载均衡消融实验
 实验设计:
   Final（QoS + LB + Security） vs  Final − LB（QoS + Security）
 
+实验场景——故意制造服务器负载失衡：
+  静态绑定模式下，4/5 的客户端被绑定到 Server1，仅 1/5 绑定到 Server2。
+  Server1 总请求率 λ=2.4（过载），Server2 总 λ=0.8（中等负载）。
+
+  在此失衡场景下考察：
+    1. 无 LB（静态绑定）：Server1 过载 → 响应时延高、吞吐受限
+    2. 有 LB（Round Robin）：请求轮流分配 → 50:50 均衡 → 响应降低、吞吐提升
+
 对比指标:
-  - 服务器负载分布
+  - 服务器负载分布（预期 Static 75:25, RR 50:50）
   - 系统吞吐量
   - 响应时延
   - Jain 公平指数
@@ -23,20 +31,41 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from mininet.log import info
 from utils import save_to_csv, save_to_json, print_separator, timestamp, ensure_dirs
 
-from core.topology import create_fresh_network, BOTTLENECK_BW, SERVER1_IP, SERVER2_IP
-from core.server_cluster import get_server_hosts, DEFAULT_STATIC_MAPPING
+from core.topology import create_fresh_network, SERVER1_IP, SERVER2_IP
+from core.server_cluster import get_server_hosts
 from services.web import start_web_server, create_test_file
 from security.acl import (
     apply_stateful_firewall, apply_acl_policies, apply_default_accept
 )
 from security.intrusion import apply_intrusion_detection
 from security.audit_db import init_db
-from policies.qos import apply_htb_policy
+from policies.qos import apply_baseline_policy
 from policies.load_balance import LoadBalancer
 
 
 LOAD_FILE_MB = 2
 BIGFILE_URL = "/lbfile.bin"
+
+# ==================== 负载均衡消融实验专用静态映射 ====================
+#
+# 设计意图：故意制造服务器负载失衡。
+#   - 4 个客户端（dorm1/lib1/teach1/office1）绑到 Server1
+#   - 1 个客户端（finance1）绑到 Server2
+#   - Server1 总请求率 λ=2.4（过载），Server2 总 λ=0.8（中等）
+#
+# 在这个失衡场景下：
+#   Static 模式 → Server1 严重过载，响应时延高
+#   RR 模式    → 请求均匀分配，显著改善响应时延
+#
+LB_STATIC_MAPPING = {
+    "dorm1": SERVER1_IP,      # λ=1.0  最高请求率，压到过载端
+    "lib1": SERVER1_IP,       # λ=0.5
+    "teach1": SERVER1_IP,     # λ=0.5
+    "office1": SERVER1_IP,    # λ=0.4
+    "finance1": SERVER2_IP,   # λ=0.8  唯一分到轻载端
+}
+# Server1 λ 合计 = 1.0 + 0.5 + 0.5 + 0.4 = 2.4 (75%)
+# Server2 λ 合计 = 0.8 (25%)
 
 CLIENT_NODES = [
     ("dorm1", "宿舍区 (热点)"),
@@ -217,18 +246,22 @@ def run_single_lb_experiment(algorithm, algo_label, duration=60):
         start_web_server(server2)
         create_test_file(server2, "lbfile.bin", LOAD_FILE_MB)
 
-    # 安全 + QoS（Final 模型的基础）
+    # 安全 + 统一 Baseline 策略（无 QoS，纯 pfifo）
     apply_default_accept(r1)
     apply_stateful_firewall(r1)
     apply_acl_policies(r1)
     apply_intrusion_detection(r1)
     init_db(r1)
-    apply_htb_policy(r1)
+    apply_baseline_policy(r1)
 
-    # 负载均衡器
-    balancer = LoadBalancer(algorithm=algorithm)
+    # 负载均衡器（Static 模式使用故意失衡的映射）
+    static_map = LB_STATIC_MAPPING if algorithm == "static" else None
+    balancer = LoadBalancer(algorithm=algorithm, static_mapping=static_map)
 
     info(f"[LB_ABLATION] 开始 {algo_label} 实验...\n")
+    if algorithm == "static":
+        info(f"[LB_ABLATION]   静态映射: Server1 ← dorm1/lib1/teach1/office1 (λ=2.4/过载), "
+             f"Server2 ← finance1 (λ=0.8/中等)\n")
     results, elapsed = generate_traffic(net, hosts, balancer, duration=duration)
     stats = compute_statistics(results, elapsed, algo_label)
 
@@ -240,15 +273,25 @@ def run_lb_ablation(duration=60):
     """
     运行负载均衡消融实验。
 
+    实验场景——故意制造服务器过载：
+      Static 绑定将 4/5 客户端固定在 Server1（λ=2.4，过载），
+      仅 finance1 分配到 Server2（λ=0.8，中等负载）。
+
     对比:
-      1. Static（统一静态绑定）— 代表 Final − LB
-      2. Round Robin — 代表 Final
+      1. Final − LB (Static):  静态绑定 → Server1 过载 → 响应高、吞吐受限
+      2. Final (Round Robin):  轮询调度 → 50:50 均衡 → 响应降低、吞吐改善
+
+    消融逻辑:
+      去掉 LB → 服务器过载失衡 → 性能指标劣化
+      加入 LB → 请求均匀分配 → 性能指标恢复
     """
     ensure_dirs()
     info("[LB_ABLATION] 开始负载均衡消融实验\n")
+    info("[LB_ABLATION] 失衡场景: Server1 ← 4/5 客户端 (λ=2.4/过载), "
+         "Server2 ← 1/5 客户端 (λ=0.8/中等)\n")
 
-    # 实验组 1: Final − LB (Static)
-    static_stats = run_single_lb_experiment("static", "Final − LB (统一静态绑定)", duration)
+    # 实验组 1: Final − LB (Static) —— Server1 过载
+    static_stats = run_single_lb_experiment("static", "Final − LB (静态绑定→过载)", duration)
 
     import os as _os
     _os.system("mn -c 2>/dev/null")
@@ -291,7 +334,12 @@ def run_lb_ablation(duration=60):
                  "S1流量", "S2流量", "负载方差", "Jain指数"],
                 csv_rows)
     save_to_json(f"lb_ablation_{ts}.json",
-                 {"static": static_stats, "round_robin": rr_stats},
+                 {
+                     "实验设计": "负载均衡消融实验：故意制造服务器过载场景",
+                     "失衡场景": "Server1 ← dorm1/lib1/teach1/office1 (λ=2.4/过载), Server2 ← finance1 (λ=0.8/中等)",
+                     "消融逻辑": "去掉LB→Server1过载性能劣化, 加入RR→50:50均衡性能恢复",
+                     "static": static_stats, "round_robin": rr_stats,
+                 },
                  subdir="load_balance")
 
     info(f"\n[LB_ABLATION] 实验完成！\n")

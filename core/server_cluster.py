@@ -7,7 +7,7 @@ core/server_cluster.py — 双服务器集群管理
   - 服务器分组信息
 """
 
-from core.topology import SERVER1_IP, SERVER2_IP, BOTTLENECK_BW, SERVER_INTF
+from core.topology import SERVER1_IP, SERVER2_IP, SERVER1_INTF, SERVER2_INTF
 
 # 双服务器 IP 列表
 SERVER_IPS = [SERVER1_IP, SERVER2_IP]

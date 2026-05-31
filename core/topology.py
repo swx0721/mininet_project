@@ -35,6 +35,7 @@ SUBNET_CONFIG = {
     "finance": {"net": "10.0.5.0/24", "gw": "10.0.5.1",   "reserve": "10.0.15.0/24"},
     "hr":      {"net": "10.0.6.0/24", "gw": "10.0.6.1",   "reserve": "10.0.16.0/24"},
     "server":  {"net": "10.0.100.0/24", "gw": "10.0.100.1", "reserve": "10.0.110.0/24"},
+    "server2": {"net": "10.0.101.0/24", "gw": "10.0.101.1", "reserve": "10.0.111.0/24"},
 }
 
 HOST_DEFINITIONS = [
@@ -51,17 +52,20 @@ HOST_DEFINITIONS = [
     ("hr1",     "10.0.6.2/24",   "hr"),
     ("hr2",     "10.0.6.3/24",   "hr"),
     ("server1", "10.0.100.2/24", "server"),
-    ("server2", "10.0.100.3/24", "server"),
+    ("server2", "10.0.101.2/24", "server2"),
 ]
 
+# 上行链路配置：各区域交换机 → 核心路由器
+# server/server2 为独立双上行链路（对称：相同带宽/时延），hr 移至 r1-eth7
 UPLINK_CONFIG = [
     ("dorm",    "r1-eth0", 100,  "5ms"),
     ("teach",   "r1-eth1", 100,  "10ms"),
     ("lib",     "r1-eth2", 100,  "5ms"),
     ("office",  "r1-eth3", 200,  "2ms"),
     ("finance", "r1-eth4", 200,  "2ms"),
-    ("server",  "r1-eth5", 1000, "1ms"),    # 拓扑级带宽，实验层通过 tc 限制为 35Mbps
-    ("hr",      "r1-eth6", 200,  "2ms"),
+    ("server",  "r1-eth5", 1000, "1ms"),   # 服务器1 独立链路
+    ("server2", "r1-eth6", 1000, "1ms"),   # 服务器2 独立链路（对称）
+    ("hr",      "r1-eth7", 200,  "2ms"),
 ]
 
 ROUTER_IPS = {
@@ -71,7 +75,8 @@ ROUTER_IPS = {
     "r1-eth3": "10.0.4.1/24",
     "r1-eth4": "10.0.5.1/24",
     "r1-eth5": "10.0.100.1/24",
-    "r1-eth6": "10.0.6.1/24",
+    "r1-eth6": "10.0.101.1/24",
+    "r1-eth7": "10.0.6.1/24",
 }
 
 DEFAULT_LINK_PARAMS = {
@@ -82,13 +87,31 @@ DEFAULT_LINK_PARAMS = {
     "finance": {"bw": 50,  "delay": "2ms"},
     "hr":      {"bw": 50,  "delay": "2ms"},
     "server":  {"bw": 100, "delay": "1ms"},
+    "server2": {"bw": 100, "delay": "1ms"},  # 与 server 对称
 }
 
-# 服务器出口瓶颈常量
-SERVER_INTF = "r1-eth5"
-BOTTLENECK_BW = 35  # Mbps
+# ==================== 全局常量 ====================
+
+# 各区域上行链路接口（QoS 作用位置）
+ZONE_UPLINKS = ["r1-eth0", "r1-eth1", "r1-eth2", "r1-eth3", "r1-eth4", "r1-eth7"]
+
+# 服务器出口接口（负载均衡实验独立链路）
+SERVER1_INTF = "r1-eth5"
+SERVER2_INTF = "r1-eth6"
+
+# 服务器 IP
 SERVER1_IP = "10.0.100.2"
-SERVER2_IP = "10.0.100.3"
+SERVER2_IP = "10.0.101.2"
+
+# 各区域上行链路基准带宽（用于 QoS 实验，基于 DEFAULT_LINK_PARAMS）
+ZONE_BASELINE_BW = {
+    "r1-eth0": 10,   # dorm
+    "r1-eth1": 20,   # teach
+    "r1-eth2": 30,   # lib
+    "r1-eth3": 50,   # office
+    "r1-eth4": 50,   # finance
+    "r1-eth7": 50,   # hr
+}
 
 
 def build_topology(with_cli=True, access_bw=None, access_delay=None,
@@ -109,8 +132,9 @@ def build_topology(with_cli=True, access_bw=None, access_delay=None,
 
     # ---------- 创建交换机 ----------
     switches = {}
-    for zone in ["dorm", "teach", "lib", "office", "finance", "server", "hr"]:
-        dpid = f"000000000000{list(SUBNET_CONFIG.keys()).index(zone) + 1:04x}"
+    zone_order = ["dorm", "teach", "lib", "office", "finance", "server", "server2", "hr"]
+    for zone in zone_order:
+        dpid = f"000000000000{zone_order.index(zone) + 1:04x}"
         switches[zone] = net.addSwitch(f"s_{zone}", dpid=dpid)
 
     # ---------- 创建主机 ----------
