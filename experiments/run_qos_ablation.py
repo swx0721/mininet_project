@@ -260,7 +260,7 @@ def run_single_policy_experiment(policy_type, label, bottleneck_bw):
     for r in latency_results:
         key = r["client"]
         if key not in summary:
-            summary[key] = {"throughputs": [], "jitters": [], "losses", "rtts": []}
+            summary[key] = {"throughputs": [], "jitters": [], "losses": [], "rtts": []}
         if "rtts" not in summary[key]:
             summary[key]["rtts"] = []
         summary[key]["rtts"].append(r["rtt_ms"])
