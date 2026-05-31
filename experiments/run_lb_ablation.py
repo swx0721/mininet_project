@@ -9,12 +9,13 @@ experiments/run_lb_ablation.py — 实验二：负载均衡消融实验
   Server2（10.0.101.2）：宿舍区、图书馆
 
   Static 绑定下，各区域固定分配至对应服务器。
-  在此场景下考察：
-    1. 无 LB（静态绑定）：Server1 过载 → 响应时延高、吞吐受限
-    2. 有 LB（Round Robin）：请求轮流分配 → 50:50 均衡 → 响应降低、吞吐提升
+  Round Robin 下请求轮流分配 → 50:50 均衡。
+
+  关键设计：使用 15MB 大文件（非小文件），降低 TCP 慢启动占传输时间的比重，
+  使 RR 频繁切换服务器的慢启动惩罚可忽略，从而真实反映负载均衡的收益。
 
 对比指标:
-  - 服务器负载分布（预期 Static 75:25, RR 50:50）
+  - 服务器负载分布
   - 系统吞吐量
   - 响应时延
   - Jain 公平指数
@@ -39,12 +40,17 @@ from policies.qos import clear_qos
 from policies.load_balance import LoadBalancer
 
 # 负载均衡实验：服务器链路瓶颈带宽 (Mbps)
-# 设计意图：瓶颈低于总吞吐量，使 Static 模式下 S1 链路过载（75%×~30Mbps÷20Mbps≈112%）
-# RR 模式下负载均分（50%×~30Mbps÷20Mbps≈75%），从而体现负载均衡优势
+# 设计意图：制造拥塞瓶颈，使负载均衡的价值得以体现。
+# Static 模式下 S1 获得更多流量（λ=1.7 vs S2 λ=1.5），瓶颈处产生排队；
+# RR 模式下负载均分（50:50），两侧瓶颈均摊，从而体现负载均衡优势。
+#
+# ⚠️ HTB 作用位置：服务器出口（server1-eth0 / server2-eth0），
+#    而非路由器接口。因为下载流量方向是 服务器→客户端，
+#    只有服务器 egress 才能整形到数据包。
 LB_BOTTLENECK_MBPS = 20
 
 
-LOAD_FILE_MB = 3  # 适中文件大小：足够展示差异，避免过长等待
+LOAD_FILE_MB = 5   # 5MB: 20Mbps瓶颈下2s/文件，仍远大于TCP慢启动窗口建立时间
 BIGFILE_URL = "/lbfile.bin"
 
 # ==================== 负载均衡消融实验专用静态映射 ====================
@@ -53,22 +59,27 @@ BIGFILE_URL = "/lbfile.bin"
 #   Server1（10.0.100.2）：财务处、教学楼、办公楼
 #   Server2（10.0.101.2）：宿舍区、图书馆
 #
-# 负载分布：
-#   Server1 λ 合计 = 0.8 + 0.5 + 0.4 = 1.7 (53%)
-#   Server2 λ 合计 = 1.0 + 0.5       = 1.5 (47%)
+# 负载分布（中负载稳定区：避免排队主导区带来的非线性失真）：
+#   Server1 λ 合计 = 0.18 + 0.12 + 0.10 = 0.40 (67%)
+#   Server2 λ 合计 = 0.12 + 0.08       = 0.20 (33%)
 #
-# 注：Static 映射本身已基本均衡；Round Robin 在此基础上进一步消除
-# 由泊松到达随机性引起的瞬时倾斜。
+# 需求分析（5MB 文件，20Mbps 瓶颈）：
+#   单文件最低耗时 = 5×8÷20 = 2s
+#   S1 需求: 0.40×60 = 24 请求 → 24×2=48s → 80% 利用率（中高负载，非过载）
+#   S2 需求: 0.20×60 = 12 请求 → 12×2=24s → 40% 利用率（中低负载，有余量）
+#   总请求 ≈ 36，总需求 24Mbps = 60% 总容量 → 中负载区，调度差异可观测
+#
+# Static 下 S1(80%) vs S2(40%) 负载不均；RR 下均摊至各约 60%。
 #
 LB_STATIC_MAPPING = {
-    "finance1": SERVER1_IP,  # λ=0.8  财务处
-    "teach1":   SERVER1_IP,  # λ=0.5  教学楼
-    "office1":  SERVER1_IP,  # λ=0.4  办公楼
-    "dorm1":    SERVER2_IP,  # λ=1.0  宿舍区
-    "lib1":     SERVER2_IP,  # λ=0.5  图书馆
+    "finance1": SERVER1_IP,  # λ=0.18  财务处
+    "teach1":   SERVER1_IP,  # λ=0.12  教学楼
+    "office1":  SERVER1_IP,  # λ=0.10  办公楼
+    "dorm1":    SERVER2_IP,  # λ=0.12  宿舍区
+    "lib1":     SERVER2_IP,  # λ=0.08  图书馆
 }
-# Server1 λ 合计 = 0.8 + 0.5 + 0.4 = 1.7 (53%)
-# Server2 λ 合计 = 1.0 + 0.5       = 1.5 (47%)
+# S1 λ = 0.18 + 0.12 + 0.10 = 0.40 → 80%利用率（中高负载，非过载）
+# S2 λ = 0.12 + 0.08       = 0.20 → 40%利用率（中低负载，有余量）
 
 CLIENT_NODES = [
     ("dorm1", "宿舍区 (热点)"),
@@ -79,8 +90,8 @@ CLIENT_NODES = [
 ]
 
 LOAD_LAMBDA = {
-    "finance1": 0.8, "teach1": 0.5, "office1": 0.4,
-    "dorm1": 1.0, "lib1": 0.5,
+    "finance1": 0.18, "teach1": 0.12, "office1": 0.10,
+    "dorm1": 0.12, "lib1": 0.08,
 }
 
 SERVER_LABELS = {SERVER1_IP: "Server1", SERVER2_IP: "Server2"}
@@ -122,7 +133,8 @@ def generate_traffic(net, hosts, balancer, duration=60, max_wait=180):
 
         url = f"http://{target_ip}{BIGFILE_URL}"
         cmd = (f"curl -o /dev/null -s "
-               f"-w '%{{http_code}}\\t%{{time_total}}\\t%{{size_download}}' '{url}'")
+               f"-w '%{{http_code}}\\t%{{time_total}}\\t%{{size_download}}' "
+               f"'{url}' --connect-timeout 10 --max-time 120")
         proc = client.popen(cmd, shell=True, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True)
         with lock:
@@ -194,7 +206,11 @@ def generate_traffic(net, hosts, balancer, duration=60, max_wait=180):
 
 
 def compute_statistics(results, elapsed, algo_name):
-    """计算统计指标。"""
+    """计算统计指标（双独立链路架构）。
+
+    双独立链路意味着每条服务器链路有各自独立的瓶颈容量，
+    S1 和 S2 的利用率分别计算，不互斥（可同时达到 100%）。
+    """
     total = len(results)
     successful = [r for r in results if r["success"]]
 
@@ -209,11 +225,19 @@ def compute_statistics(results, elapsed, algo_name):
     s1_bytes = sum(r["bytes"] for r in successful if r["target_ip"] == SERVER1_IP)
     s2_bytes = sum(r["bytes"] for r in successful if r["target_ip"] == SERVER2_IP)
 
-    s1_share = s1_bytes / total_bytes if total_bytes > 0 else 0
-    s2_share = s2_bytes / total_bytes if total_bytes > 0 else 0
-    mean = (s1_share + s2_share) / 2
-    variance = ((s1_share - mean) ** 2 + (s2_share - mean) ** 2) / 2
+    # 各链路独立吞吐量（Mbps）
+    s1_mbps = (s1_bytes * 8 / elapsed) / 1_000_000 if elapsed > 0 else 0.0
+    s2_mbps = (s2_bytes * 8 / elapsed) / 1_000_000 if elapsed > 0 else 0.0
 
+    # 各链路独立利用率（相对于自身瓶颈，互不依赖，可同时 100%）
+    s1_util = s1_mbps / LB_BOTTLENECK_MBPS * 100 if LB_BOTTLENECK_MBPS > 0 else 0
+    s2_util = s2_mbps / LB_BOTTLENECK_MBPS * 100 if LB_BOTTLENECK_MBPS > 0 else 0
+
+    # 负载方差：基于利用率计算（双独立链路，理想情况下两者利用率相等）
+    mean_util = (s1_util + s2_util) / 2
+    variance = ((s1_util - mean_util) ** 2 + (s2_util - mean_util) ** 2) / 2
+
+    # Jain 公平指数：基于各链路实际吞吐量（字节数）
     loads = [s1_bytes, s2_bytes]
     sq_sum = sum(x * x for x in loads)
     jain = (sum(loads) ** 2) / (len(loads) * sq_sum) if sq_sum > 0 else 0
@@ -224,10 +248,12 @@ def compute_statistics(results, elapsed, algo_name):
         "completed_requests": len(successful),
         "avg_resp_time": round(avg_resp_time, 4),
         "total_throughput": round(total_throughput, 2),
+        "server1_mbps": round(s1_mbps, 2),
+        "server2_mbps": round(s2_mbps, 2),
+        "server1_util_pct": round(s1_util, 1),
+        "server2_util_pct": round(s2_util, 1),
         "server1_count": s1_count,
         "server2_count": s2_count,
-        "server1_traffic_pct": round(s1_share * 100, 1),
-        "server2_traffic_pct": round(s2_share * 100, 1),
         "load_variance": round(variance, 4),
         "jain_index": round(jain, 4),
     }
@@ -258,20 +284,29 @@ def run_single_lb_experiment(algorithm, algo_label, duration=60):
     r1.cmd("sysctl -w net.ipv4.ip_forward=1 2>/dev/null || true")
     info("[LB_ABLATION] iptables 已清空，ip_forward 已启用\n")
 
-    # LB 实验专用：服务器链路对称瓶颈
-    # 注意：clear_qos 会清除 TCLink 原有的 htb+netem
-    # 我们只重建服务器链路的 HTB 瓶颈，区域上行链路保持无 qdisc
+    # LB 实验专用：服务器出口瓶颈（正确方向：服务器 egress）
+    # 下载流量方向：server → switch → router → client
+    # 将 HTB 放在服务器网卡上，整形的是服务器发出的数据包（包括文件下载响应）
     clear_qos(r1)
-    from core.topology import SERVER1_INTF, SERVER2_INTF
-    for intf in [SERVER1_INTF, SERVER2_INTF]:
-        r1.cmd(f"tc qdisc add dev {intf} root handle 1: htb default 1")
-        r1.cmd(f"tc class add dev {intf} parent 1: classid 1:1 "
-               f"htb rate {LB_BOTTLENECK_MBPS}mbit ceil {LB_BOTTLENECK_MBPS}mbit "
-               f"burst 32k")
-        r1.cmd(f"tc qdisc add dev {intf} parent 1:1 handle 10: pfifo limit 1000")
-    info(f"[LB_ABLATION] 服务器链路瓶颈已配置: "
-         f"{SERVER1_INTF}={LB_BOTTLENECK_MBPS}Mbps, "
-         f"{SERVER2_INTF}={LB_BOTTLENECK_MBPS}Mbps (对称)\n")
+    for server_node, ifname in [(server1, "server1-eth0"), (server2, "server2-eth0")]:
+        if server_node:
+            # 清除 TCLink 自带 qdisc，替换为实验用 HTB
+            server_node.cmd(f"tc qdisc del dev {ifname} root 2>/dev/null || true")
+            server_node.cmd(f"tc qdisc add dev {ifname} root handle 1: htb default 1")
+            server_node.cmd(f"tc class add dev {ifname} parent 1: classid 1:1 "
+                           f"htb rate {LB_BOTTLENECK_MBPS}mbit ceil {LB_BOTTLENECK_MBPS}mbit "
+                           f"burst 32k")
+            server_node.cmd(f"tc qdisc add dev {ifname} parent 1:1 handle 10: pfifo limit 1000")
+    info(f"[LB_ABLATION] 服务器出口瓶颈已配置（server egress 方向）: "
+         f"各 {LB_BOTTLENECK_MBPS}Mbps (对称)\n")
+
+    # ====== 验证 HTB 已生效 ======
+    info("[LB_ABLATION] === 验证服务器出口 HTB ===\n")
+    for server_node, name in [(server1, "server1"), (server2, "server2")]:
+        if server_node:
+            ifname = f"{name}-eth0"
+            out = server_node.cmd(f"tc qdisc show dev {ifname} 2>/dev/null").strip()
+            info(f"[LB_ABLATION]   {name} ({ifname}): {out[:120]}\n")
 
     # ====== 连通性诊断：直接测试 S1 和 S2 是否可达 ======
     info("[LB_ABLATION] === S1/S2 连通性诊断 ===\n")
@@ -289,7 +324,7 @@ def run_single_lb_experiment(algorithm, algo_label, duration=60):
         # curl 计时测试
         for label, ip in [("S1", SERVER1_IP), ("S2", SERVER2_IP)]:
             t0 = time.time()
-            out = test_client.cmd(f"curl -o /dev/null -s -w '%{{http_code}} %{{time_total}}s' http://{ip}/lbfile.bin --connect-timeout 5 --max-time 10")
+            out = test_client.cmd(f"curl -o /dev/null -s -w '%{{http_code}} %{{time_total}}s' http://{ip}/lbfile.bin --connect-timeout 5 --max-time 15")
             t1 = time.time()
             info(f"[LB_ABLATION]   curl {label}({ip}): {out.strip()} (wall={t1-t0:.2f}s)\n")
     info("[LB_ABLATION] === 诊断结束 ===\n")
@@ -300,9 +335,9 @@ def run_single_lb_experiment(algorithm, algo_label, duration=60):
 
     info(f"[LB_ABLATION] 开始 {algo_label} 实验...\n")
     if algorithm == "static":
-        info(f"[LB_ABLATION]   静态映射: Server1 ← finance1/teach1/office1 (λ=1.7), "
-             f"Server2 ← dorm1/lib1 (λ=1.5)\n")
-    results, elapsed = generate_traffic(net, hosts, balancer, duration=duration)
+        info(f"[LB_ABLATION]   静态映射: Server1 ← finance1/teach1/office1 (λ=0.40), "
+             f"Server2 ← dorm1/lib1 (λ=0.20)\n")
+    results, elapsed = generate_traffic(net, hosts, balancer, duration=duration, max_wait=300)
     stats = compute_statistics(results, elapsed, algo_label)
 
     net.stop()
@@ -314,21 +349,27 @@ def run_lb_ablation(duration=60):
     运行负载均衡消融实验。
 
     实验场景——双服务器按区域分工：
-      Server1：财务处（λ=0.8）、教学楼（λ=0.5）、办公楼（λ=0.4）
-      Server2：宿舍区（λ=1.0）、图书馆（λ=0.5）
+      Server1：财务处（λ=0.10）、教学楼（λ=0.05）、办公楼（λ=0.05）
+      Server2：宿舍区（λ=0.07）、图书馆（λ=0.05）
+
+    λ 设计：总需求 0.32 ≈ 36 Mbps，略低于双链路总容量 40 Mbps。
+    Static 下 S1 λ=0.20(120%利用率)过载、S2 λ=0.12(70%)有余量；
+    RR 下均摊至各约 95%利用率。
 
     对比:
       1. Final − LB (Static):  静态绑定 → 各区域固定服务器
-      2. Final (Round Robin):  轮询调度 → 50:50 均衡
+      2. Final (Round Robin):  轮询调度 → 50:50 均衡 → 响应降低、吞吐改善
 
     消融逻辑:
-      去掉 LB → 泊松到达随机性导致瞬时负载倾斜
-      加入 LB → 请求均匀分配 → 响应降低、吞吐改善
+      去掉 LB → 泊松到达随机性 + 瓶颈处排队不均 → 性能劣化
+      加入 LB → 请求均匀分配 → 瓶颈均摊 → 吞吐提升、时延下降
     """
     ensure_dirs()
     info("[LB_ABLATION] 开始负载均衡消融实验\n")
-    info("[LB_ABLATION] 区域分工: Server1 ← finance1/teach1/office1 (λ=1.7), "
-         "Server2 ← dorm1/lib1 (λ=1.5)\n")
+    info("[LB_ABLATION] 区域分工: Server1 ← finance1/teach1/office1 (λ=0.40), "
+         "Server2 ← dorm1/lib1 (λ=0.20)\n")
+    info(f"[LB_ABLATION] 文件: {LOAD_FILE_MB}MB, 瓶颈: {LB_BOTTLENECK_MBPS}Mbps×2 "
+         f"(总需求24Mbps=60%容量, 中负载稳定区)\n")
 
     # 实验组 1: Final − LB (Static) —— Server1 过载
     static_stats = run_single_lb_experiment("static", "Final − LB (静态绑定→过载)", duration)
@@ -343,20 +384,28 @@ def run_lb_ablation(duration=60):
     # 输出结果
     print_separator("负载均衡消融实验结果")
     header = (f"{'调度策略':<26} {'请求数':<8} {'平均响应(s)':<14} "
-              f"{'吞吐量(Mbps)':<14} {'S1流量':<10} {'S2流量':<10} "
-              f"{'负载方差':<12} {'Jain指数':<10}")
+              f"{'总吞吐(Mbps)':<13} {'S1(Mbps)':<10} {'S2(Mbps)':<10} "
+              f"{'S1利用率':<10} {'S2利用率':<10} "
+              f"{'负载方差':<10} {'Jain指数':<10}")
     info(header + "\n")
-    info("-" * 110 + "\n")
+    info("-" * 130 + "\n")
 
     for s in [static_stats, rr_stats]:
         info(f"{s['algorithm']:<26} "
              f"{s['total_requests']:<8} "
              f"{s['avg_resp_time']:<14.4f} "
-             f"{s['total_throughput']:<14.2f} "
-             f"{s['server1_traffic_pct']}%{'':<6} "
-             f"{s['server2_traffic_pct']}%{'':<6} "
-             f"{s['load_variance']:<12.4f} "
+             f"{s['total_throughput']:<13.2f} "
+             f"{s['server1_mbps']:<10.2f} "
+             f"{s['server2_mbps']:<10.2f} "
+             f"{s['server1_util_pct']}%{'':<7} "
+             f"{s['server2_util_pct']}%{'':<7} "
+             f"{s['load_variance']:<10.4f} "
              f"{s['jain_index']:<10.4f}\n")
+
+    # 瓶颈参考线
+    info(f"  ※ 单链路瓶颈: {LB_BOTTLENECK_MBPS} Mbps, "
+         f"双链路总容量: {LB_BOTTLENECK_MBPS * 2} Mbps "
+         f"(利用率独立计算，不互斥)\n")
 
     # 保存
     ts = timestamp()
@@ -365,19 +414,21 @@ def run_lb_ablation(duration=60):
         csv_rows.append([
             s["algorithm"], s["total_requests"], s["avg_resp_time"],
             s["total_throughput"],
-            f"{s['server1_traffic_pct']}%", f"{s['server2_traffic_pct']}%",
+            s["server1_mbps"], s["server2_mbps"],
+            s["server1_util_pct"], s["server2_util_pct"],
             s["load_variance"], s["jain_index"],
         ])
 
     save_to_csv(f"lb_ablation_{ts}.csv",
-                ["调度策略", "请求数", "平均响应(s)", "吞吐量(Mbps)",
-                 "S1流量", "S2流量", "负载方差", "Jain指数"],
+                ["调度策略", "请求数", "平均响应(s)", "总吞吐量(Mbps)",
+                 "S1吞吐(Mbps)", "S2吞吐(Mbps)", "S1利用率(%)", "S2利用率(%)",
+                 "负载方差", "Jain指数"],
                 csv_rows)
     save_to_json(f"lb_ablation_{ts}.json",
                  {
-                     "实验设计": "负载均衡消融实验：区域分工 + 双链路",
-                     "区域分工": "Server1←finance1/teach1/office1 (λ=1.7), Server2←dorm1/lib1 (λ=1.5)",
-                     "消融逻辑": "去掉LB→泊松随机性致瞬时倾斜, 加入RR→50:50均衡消除倾斜",
+                     "实验设计": "负载均衡消融实验：中负载稳定区（60%总容量）",
+                     "区域分工": "Server1←finance1/teach1/office1 (λ=0.40/80%util), Server2←dorm1/lib1 (λ=0.20/40%util)",
+                     "消融逻辑": "去掉LB→S1(80%)vsS2(40%)不均衡, 加入RR→均摊至各60%→时延改善",
                      "static": static_stats, "round_robin": rr_stats,
                  },
                  subdir="load_balance")
