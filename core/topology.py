@@ -51,20 +51,18 @@ HOST_DEFINITIONS = [
     ("finance2","10.0.5.3/24",   "finance"),
     ("hr1",     "10.0.6.2/24",   "hr"),
     ("hr2",     "10.0.6.3/24",   "hr"),
-    ("server1", "10.0.100.2/24", "server"),
-    ("server2", "10.0.101.2/24", "server2"),
+    ("server1", "10.0.100.2/24", "server"),    # s_server1 → r1-eth5
+    ("server2", "10.0.101.2/24", "server2"),   # s_server2 → r1-eth6（独立子网）
 ]
 
 # 上行链路配置：各区域交换机 → 核心路由器
-# server/server2 为独立双上行链路（对称：相同带宽/时延），hr 移至 r1-eth7
+# 注意：服务器双链路在 build_topology 中特殊处理（不在此列表中）
 UPLINK_CONFIG = [
     ("dorm",    "r1-eth0", 100,  "5ms"),
     ("teach",   "r1-eth1", 100,  "10ms"),
     ("lib",     "r1-eth2", 100,  "5ms"),
     ("office",  "r1-eth3", 200,  "2ms"),
     ("finance", "r1-eth4", 200,  "2ms"),
-    ("server",  "r1-eth5", 1000, "1ms"),   # 服务器1 独立链路
-    ("server2", "r1-eth6", 1000, "1ms"),   # 服务器2 独立链路（对称）
     ("hr",      "r1-eth7", 200,  "2ms"),
 ]
 
@@ -74,8 +72,8 @@ ROUTER_IPS = {
     "r1-eth2": "10.0.3.1/24",
     "r1-eth3": "10.0.4.1/24",
     "r1-eth4": "10.0.5.1/24",
-    "r1-eth5": "10.0.100.1/24",
-    "r1-eth6": "10.0.101.1/24",
+    "r1-eth5": "10.0.100.1/24",   # 服务器1 独立链路（s_server1）
+    "r1-eth6": "10.0.101.1/24",   # 服务器2 独立链路（s_server2，对称）
     "r1-eth7": "10.0.6.1/24",
 }
 
@@ -86,8 +84,8 @@ DEFAULT_LINK_PARAMS = {
     "office":  {"bw": 50,  "delay": "2ms"},
     "finance": {"bw": 50,  "delay": "2ms"},
     "hr":      {"bw": 50,  "delay": "2ms"},
-    "server":  {"bw": 100, "delay": "1ms"},
-    "server2": {"bw": 100, "delay": "1ms"},  # 与 server 对称
+    "server":  {"bw": 100, "delay": "1ms"},   # 服务器1 独立链路
+    "server2": {"bw": 100, "delay": "1ms"},   # 服务器2 独立链路（对称）
 }
 
 # ==================== 全局常量 ====================
@@ -101,7 +99,7 @@ SERVER2_INTF = "r1-eth6"
 
 # 服务器 IP
 SERVER1_IP = "10.0.100.2"
-SERVER2_IP = "10.0.101.2"
+SERVER2_IP = "10.0.101.2"   # 独立子网，通过 s_server2 → r1-eth6
 
 # 各区域上行链路基准带宽（用于 QoS 实验，基于 DEFAULT_LINK_PARAMS）
 ZONE_BASELINE_BW = {
@@ -118,6 +116,9 @@ def build_topology(with_cli=True, access_bw=None, access_delay=None,
                    core_bw=None):
     """
     构建完整的校园网拓扑。
+    
+    特殊处理：server1 和 server2 分别通过独立的交换机（s_server1 和 s_server2）
+    连接到核心路由器的不同上行链路（r1-eth5 和 r1-eth6），形成对称的双链路结构。
 
     返回:
         net:     Mininet 网络对象
@@ -132,10 +133,14 @@ def build_topology(with_cli=True, access_bw=None, access_delay=None,
 
     # ---------- 创建交换机 ----------
     switches = {}
-    zone_order = ["dorm", "teach", "lib", "office", "finance", "server", "server2", "hr"]
+    zone_order = ["dorm", "teach", "lib", "office", "finance", "hr"]
     for zone in zone_order:
         dpid = f"000000000000{zone_order.index(zone) + 1:04x}"
         switches[zone] = net.addSwitch(f"s_{zone}", dpid=dpid)
+    
+    # 服务器双交换机（对称结构）
+    switches["s_server1"] = net.addSwitch("s_server1", dpid="0000000000000007")
+    switches["s_server2"] = net.addSwitch("s_server2", dpid="0000000000000008")
 
     # ---------- 创建主机 ----------
     hosts = {}
@@ -154,14 +159,31 @@ def build_topology(with_cli=True, access_bw=None, access_delay=None,
 
     for name, ip, zone in HOST_DEFINITIONS:
         params = link_params[zone]
-        net.addLink(hosts[name], switches[zone],
-                    bw=params["bw"], delay=params["delay"])
+        # 特殊处理：server1 → s_server1, server2 → s_server2
+        if name == "server1":
+            net.addLink(hosts[name], switches["s_server1"],
+                        bw=params["bw"], delay=params["delay"])
+        elif name == "server2":
+            net.addLink(hosts[name], switches["s_server2"],
+                        bw=params["bw"], delay=params["delay"])
+        else:
+            net.addLink(hosts[name], switches[zone],
+                        bw=params["bw"], delay=params["delay"])
 
     # ---------- 上行链路 ----------
+    # 标准区域上行链路
     for zone, intf_name, bw, delay in UPLINK_CONFIG:
         effective_bw = core_bw if core_bw is not None else bw
         net.addLink(switches[zone], r1, intfName2=intf_name,
                     bw=effective_bw, delay=delay)
+    
+    # 服务器双链路上行（对称：同带宽同延迟）
+    srv1_params = link_params["server"]
+    srv2_params = link_params["server2"]
+    net.addLink(switches["s_server1"], r1, intfName2="r1-eth5",
+                bw=srv1_params["bw"], delay=srv1_params["delay"])
+    net.addLink(switches["s_server2"], r1, intfName2="r1-eth6",
+                bw=srv2_params["bw"], delay=srv2_params["delay"])
 
     # ---------- 启动 ----------
     net.start()

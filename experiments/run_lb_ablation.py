@@ -34,16 +34,16 @@ from utils import save_to_csv, save_to_json, print_separator, timestamp, ensure_
 from core.topology import create_fresh_network, SERVER1_IP, SERVER2_IP
 from core.server_cluster import get_server_hosts
 from services.web import start_web_server, create_test_file
-from security.acl import (
-    apply_stateful_firewall, apply_acl_policies, apply_default_accept
-)
-from security.intrusion import apply_intrusion_detection
-from security.audit_db import init_db
-from policies.qos import apply_baseline_policy
+from policies.qos import clear_qos
 from policies.load_balance import LoadBalancer
 
+# 负载均衡实验：服务器链路瓶颈带宽 (Mbps)
+# 设计意图：瓶颈低于总吞吐量，使 Static 模式下 S1 链路过载（75%×~30Mbps÷20Mbps≈112%）
+# RR 模式下负载均分（50%×~30Mbps÷20Mbps≈75%），从而体现负载均衡优势
+LB_BOTTLENECK_MBPS = 20
 
-LOAD_FILE_MB = 2
+
+LOAD_FILE_MB = 3  # 适中文件大小：足够展示差异，避免过长等待
 BIGFILE_URL = "/lbfile.bin"
 
 # ==================== 负载均衡消融实验专用静态映射 ====================
@@ -246,13 +246,50 @@ def run_single_lb_experiment(algorithm, algo_label, duration=60):
         start_web_server(server2)
         create_test_file(server2, "lbfile.bin", LOAD_FILE_MB)
 
-    # 安全 + 统一 Baseline 策略（无 QoS，纯 pfifo）
-    apply_default_accept(r1)
-    apply_stateful_firewall(r1)
-    apply_acl_policies(r1)
-    apply_intrusion_detection(r1)
-    init_db(r1)
-    apply_baseline_policy(r1)
+    # ====== 最小化安全配置：仅 flush + ACCEPT，排除 iptables 干扰 ======
+    r1.cmd("iptables -F 2>/dev/null || true")
+    r1.cmd("iptables -X 2>/dev/null || true")
+    r1.cmd("iptables -P FORWARD ACCEPT")
+    r1.cmd("iptables -P INPUT ACCEPT")
+    r1.cmd("iptables -P OUTPUT ACCEPT")
+    r1.cmd("sysctl -w net.ipv4.ip_forward=1 2>/dev/null || true")
+    info("[LB_ABLATION] iptables 已清空，ip_forward 已启用\n")
+
+    # LB 实验专用：服务器链路对称瓶颈
+    # 注意：clear_qos 会清除 TCLink 原有的 htb+netem
+    # 我们只重建服务器链路的 HTB 瓶颈，区域上行链路保持无 qdisc
+    clear_qos(r1)
+    from core.topology import SERVER1_INTF, SERVER2_INTF
+    for intf in [SERVER1_INTF, SERVER2_INTF]:
+        r1.cmd(f"tc qdisc add dev {intf} root handle 1: htb default 1")
+        r1.cmd(f"tc class add dev {intf} parent 1: classid 1:1 "
+               f"htb rate {LB_BOTTLENECK_MBPS}mbit ceil {LB_BOTTLENECK_MBPS}mbit "
+               f"burst 32k")
+        r1.cmd(f"tc qdisc add dev {intf} parent 1:1 handle 10: pfifo limit 1000")
+    info(f"[LB_ABLATION] 服务器链路瓶颈已配置: "
+         f"{SERVER1_INTF}={LB_BOTTLENECK_MBPS}Mbps, "
+         f"{SERVER2_INTF}={LB_BOTTLENECK_MBPS}Mbps (对称)\n")
+
+    # ====== 连通性诊断：直接测试 S1 和 S2 是否可达 ======
+    info("[LB_ABLATION] === S1/S2 连通性诊断 ===\n")
+    r1.cmd("ip addr show r1-eth5 | grep inet || echo 'r1-eth5 NO IP'")
+    r1.cmd("ip addr show r1-eth6 | grep inet || echo 'r1-eth6 NO IP'")
+    
+    test_client = hosts.get("dorm1")
+    if test_client:
+        # ping 测试
+        for label, ip in [("S1", SERVER1_IP), ("S2", SERVER2_IP)]:
+            out = test_client.cmd(f"ping -c 3 -W 2 {ip}")
+            loss = "0% packet loss" in out or " 0% packet loss" in out
+            info(f"[LB_ABLATION]   ping {label}({ip}): {'通' if loss else '不通'} | {out.split(chr(10))[-3] if out else 'N/A'}\n")
+        
+        # curl 计时测试
+        for label, ip in [("S1", SERVER1_IP), ("S2", SERVER2_IP)]:
+            t0 = time.time()
+            out = test_client.cmd(f"curl -o /dev/null -s -w '%{{http_code}} %{{time_total}}s' http://{ip}/lbfile.bin --connect-timeout 5 --max-time 10")
+            t1 = time.time()
+            info(f"[LB_ABLATION]   curl {label}({ip}): {out.strip()} (wall={t1-t0:.2f}s)\n")
+    info("[LB_ABLATION] === 诊断结束 ===\n")
 
     # 负载均衡器（Static 模式使用故意失衡的映射）
     static_map = LB_STATIC_MAPPING if algorithm == "static" else None

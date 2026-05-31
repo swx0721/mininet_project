@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from mininet.log import info
 from utils import save_to_csv, save_to_json, print_separator, timestamp, ensure_dirs
 
-from core.topology import create_fresh_network, BOTTLENECK_BW
+from core.topology import create_fresh_network
 from core.server_cluster import get_server_hosts
 from services.web import start_web_server
 from services.iperf import start_iperf_server
