@@ -1,0 +1,334 @@
+这是一个大型重构任务，我将系统性地完成。先创建目录结构再逐个编写文件。
+
+已创建 10 个待办事项
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/core)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/models)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/policies)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/security)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/services)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/configs)
+
+正在启动: *创建 core/ 模块（router, topology, server_cluster）* (2/10)
+
+现在开始创建所有核心模块文件。
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/core/__init__.py)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/core/router.py)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/core/topology.py)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/core/server_cluster.py)
+
+正在启动: *创建 services/ 模块（web, ftp, iperf）* (3/10)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/services/__init__.py)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/services/web.py)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/services/ftp.py)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/services/iperf.py)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/policies/__init__.py)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/policies/qos.py)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/policies/load_balance.py)
+
+现在创建安全模块的所有文件。
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/security/__init__.py)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/security/acl.py)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/security/intrusion.py)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/security/firewall.py)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/security/audit_db.py)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/security/event_logger.py)
+
+正在启动: *创建 models/ 模块（baseline, qos, lb, security, final）* (6/10)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/models/__init__.py)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/models/baseline.py)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/models/qos_model.py)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/models/lb_model.py)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/models/security_model.py)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/models/final.py)
+
+现在创建配置文件和实验脚本。
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/configs/baseline.yaml)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/configs/qos.yaml)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/configs/lb.yaml)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/configs/security.yaml)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/configs/final.yaml)
+
+正在启动: *重写 experiments/ 实验脚本* (8/10)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/experiments/run_qos_ablation.py)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/experiments/run_lb_ablation.py)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/experiments/run_security_test.py)
+
+现在重写 main.py 和更新 analysis 兼容性。
+
+正在启动: *重写 main.py 模型调度器* (9/10)
+
+Created [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/main.py)
+
+Read [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/main.py#1-1), lines 1 to 10
+
+
+
+
+```
+
+```
+现在更新旧文件的兼容性存根和分析模块。
+
+
+
+
+```
+
+```
+
+
+
+
+
+```
+
+```
+
+
+Read [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/services.py)
+
+
+
+
+```
+
+```
+现在更新 security.py 和 topology.py 为兼容性存根。
+
+
+
+
+```
+
+```
+
+
+
+
+
+```
+
+```
+
+
+Read [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/topology.py#1-1), lines 1 to 100
+
+Read [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net/topology.py#1-1), lines 1 to 200
+
+
+
+
+```
+
+```
+
+
+已完成: *重写 main.py 模型调度器* (9/10)
+
+最后验证项目结构。
+
+Read [](file:///e%3A/task/%E5%AD%A6%E6%A0%A1%E4%BB%BB%E5%8A%A1/%E5%A4%A7%E4%B8%89%E6%98%A5%E5%AD%A3/%E8%AE%A1%E7%AE%97%E6%9C%BA%E7%BD%91%E7%BB%9C/%E9%A1%B9%E7%9B%AE%E6%96%87%E4%BB%B6/%E4%BB%A3%E7%A0%81/campus-net)
+
+项目重构已完成！以下是完整的说明。
+
+---
+
+## ✅ 重构完成 — CampusNet-Final 模型驱动系统
+
+### 📁 最终目录结构
+
+```
+campus_net/
+├── core/                          # 网络基础设施（纯拓扑，零控制逻辑）
+│   ├── __init__.py
+│   ├── topology.py                # Mininet 拓扑搭建
+│   ├── router.py                  # LinuxRouter 封装
+│   └── server_cluster.py          # 双服务器 + 汇聚交换机
+│
+├── models/                        # 模型定义（组合模块）
+│   ├── __init__.py
+│   ├── baseline.py                # Baseline = 拓扑 + 服务 + 基础ACL
+│   ├── qos_model.py               # Baseline + HTB QoS
+│   ├── lb_model.py                # Baseline + Round Robin
+│   ├── security_model.py          # Baseline + 完整安全体系
+│   └── final.py                   # CampusNet-Final = 全部模块
+│
+├── policies/                      # 优化策略（独立可插拔）
+│   ├── __init__.py
+│   ├── qos.py                     # HTB / prio QoS（财务处+人事处）
+│   └── load_balance.py            # Round Robin 调度器
+│
+├── security/                      # 安全体系（统一管理）
+│   ├── __init__.py
+│   ├── acl.py                     # ACL 访问控制
+│   ├── intrusion.py               # 端口扫描 + ICMP/SYN Flood 检测
+│   ├── firewall.py                # iptables 自动封禁
+│   ├── audit_db.py                # SQLite 安全审计中心
+│   └── event_logger.py            # 安全事件统一入口
+│
+├── services/                      # 网络服务
+│   ├── __init__.py
+│   ├── web.py                     # HTTP Web 服务
+│   ├── ftp.py                     # FTP 服务
+│   └── iperf.py                   # iperf3 性能测试
+│
+├── experiments/                   # 实验脚本
+│   ├── run_qos_ablation.py        # 实验一：QoS 消融
+│   ├── run_lb_ablation.py         # 实验二：负载均衡消融
+│   ├── run_security_test.py       # 实验三：安全策略验证
+│   └── (旧版脚本保留)
+│
+├── configs/                       # YAML 配置
+│   ├── baseline.yaml / qos.yaml / lb.yaml
+│   ├── security.yaml / final.yaml
+│
+├── analysis/                      # 可视化 + 报告（保留）
+├── utils.py                       # 工具函数（保留）
+├── main.py                        # 模型调度器入口
+├── security.py                    # [兼容性存根]
+├── services.py                    # [兼容性存根]
+├── topology.py                    # [兼容性存根]
+└── campus_net_origin.py           # 原始文件（保留）
+```
+
+---
+
+### 🖥️ 运行指令
+
+#### 模型驱动模式（交互式 CLI）
+
+```bash
+# 部署 Baseline 模型
+python main.py --model baseline
+
+# 部署 CampusNet-Final 统一模型（默认）
+python main.py --model final
+
+# 部署 QoS 增强模型
+python main.py --model qos
+
+# 部署负载均衡模型
+python main.py --model lb
+
+# 部署安全增强模型
+python main.py --model security
+
+# 严格安全模式
+python main.py --model final --strict
+
+# 调试：统一接入带宽和时延
+python main.py --model final --bw 50 --delay 5ms
+```
+
+#### 实验一：QoS 消融实验
+
+```bash
+# 运行 QoS 消融实验（Final vs Final−QoS）
+python main.py --experiment qos_ablation
+
+# 指定实验时长
+python main.py --experiment qos_ablation --duration 30
+```
+
+对比：**Final（HTB QoS） vs Final−QoS（Baseline pfifo）**，测量财务处/人事处吞吐量、时延、抖动、丢包率。
+
+#### 实验二：负载均衡消融实验
+
+```bash
+# 运行负载均衡消融实验（Final vs Final−LB）
+python main.py --experiment lb_ablation
+
+# 指定实验时长
+python main.py --experiment lb_ablation --duration 60
+```
+
+对比：**Final（Round Robin） vs Final−LB（Static binding）**，测量服务器负载分布、吞吐量、Jain 指数。
+
+#### 实验三：安全策略验证实验
+
+```bash
+# 运行全部四个安全子实验
+python main.py --experiment security_test
+```
+
+包含：
+- 3.1 ACL 访问控制验证
+- 3.2 端口扫描检测与自动封禁
+- 3.3 ICMP Flood + TCP SYN Flood 防护
+- 3.4 SQLite 安全日志审计
+
+#### 一键运行全部实验
+
+```bash
+python main.py --auto
+
+# 实验 + 绘图 + 报告
+python main.py --auto --plot --report
+```
+
+#### YAML 配置模式
+
+```bash
+python main.py --config configs/final.yaml
+python main.py --config configs/baseline.yaml
+```
+
+---
+
+### 🔄 模型对照表
+
+| 模型 | QoS | LB | ACL | 入侵检测 | 自动封禁 | SQLite审计 |
+|------|:---:|:--:|:---:|:-------:|:-------:|:---------:|
+| `baseline` | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
+| `qos` | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ |
+| `lb` | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ |
+| security | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ |
+| **`final`** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+---
+
+### 🆕 关键改进
+
+1. **QoS 现已覆盖人事处** — qos.py 中 HTB class 1:10 同时匹配 `10.0.5.0/24`（财务处）和 `10.0.6.0/24`（人事处）
+2. **完整安全体系** — 新增端口扫描检测、TCP SYN Flood 防护、自动封禁、SQLite 审计
+3. **模型解耦** — QoS / LB / Security 完全独立，通过 models 组合
+4. **消融实验正确** — 以 Final 为基准，分别移除各模块
+
+已进行更改。

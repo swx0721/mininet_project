@@ -1,0 +1,24 @@
+# CampusNet Baseline 模型配置
+model: baseline
+description: "基础校园网络模型（拓扑 + 服务 + 基础ACL）"
+
+topology:
+  bottleneck_bw: 35
+  server_count: 2
+
+modules:
+  qos:
+    enabled: false
+  load_balance:
+    enabled: false
+  security:
+    enabled: true
+    acl: true
+    port_scan_detection: false
+    flood_protection: false
+    auto_ban: false
+    audit_db: false
+
+experiment:
+  duration: 60
+  repeat: 3

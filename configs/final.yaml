@@ -1,0 +1,29 @@
+# CampusNet-Final 统一模型配置
+model: final
+description: "CampusNet-Final 统一模型（QoS + LB + Security）"
+
+topology:
+  bottleneck_bw: 35
+  server_count: 2
+
+modules:
+  qos:
+    enabled: true
+    algorithm: htb
+    priority_subnets:
+      - 10.0.5.0/24    # 财务处
+      - 10.0.6.0/24    # 人事处
+  load_balance:
+    enabled: true
+    algorithm: round_robin
+  security:
+    enabled: true
+    acl: true
+    port_scan_detection: true
+    flood_protection: true
+    auto_ban: true
+    audit_db: true
+
+experiment:
+  duration: 60
+  repeat: 3

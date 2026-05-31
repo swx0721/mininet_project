@@ -1,0 +1,24 @@
+# CampusNet 安全增强模型配置
+model: security
+description: "安全增强模型（Baseline + 完整安全体系）"
+
+topology:
+  bottleneck_bw: 35
+  server_count: 2
+
+modules:
+  qos:
+    enabled: false
+  load_balance:
+    enabled: false
+  security:
+    enabled: true
+    acl: true
+    port_scan_detection: true
+    flood_protection: true
+    auto_ban: true
+    audit_db: true
+
+experiment:
+  duration: 60
+  repeat: 3
