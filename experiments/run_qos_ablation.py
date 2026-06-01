@@ -247,6 +247,11 @@ def run_competitive_measurement(net, hosts, duration):
     # 创建 Round Robin 负载均衡器（QoS 消融实验中必须使用 RR）
     load_balancer = LoadBalancer(algorithm="round_robin")
 
+    # 打印端口分配信息
+    info("[QOS_ABLATION] iperf3 端口分配（Server1/Server2 均开放 5201-5204）:\n")
+    for spec in COMPETING_CLIENTS:
+        info(f"  {spec[0]:<16} {spec[4]:<5} port={spec[3]} (由 LB 动态分配目标)\n")
+
     results_lock = threading.Lock()
     flow_samples = {client_spec[0]: [] for client_spec in COMPETING_CLIENTS}
     end_time = time.time() + duration
@@ -346,7 +351,7 @@ def run_competitive_measurement(net, hosts, duration):
     results = {}
     for client_spec in COMPETING_CLIENTS:
         client_name = client_spec[0]
-        protocol = get_protocol(client_spec)
+        protocol = client_spec[4]
         samples = flow_samples.get(client_name, [])
         if not samples:
             results[client_name] = None

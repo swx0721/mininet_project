@@ -38,11 +38,11 @@ def ban_ip(ip, reason="未知", duration=None, r1=None):
 
     _banned_ips[ip] = now + duration
 
-    # 下发 iptables 规则
+    # 下发 iptables 规则（使用 -I 插入到链首，确保优先于已有 ACCEPT 规则）
     if r1 is not None:
-        r1.cmd(f"iptables -A FORWARD -s {ip} -j DROP")
-        r1.cmd(f"iptables -A FORWARD -d {ip} -j DROP")
-        r1.cmd(f"iptables -A INPUT -s {ip} -j DROP")
+        r1.cmd(f"iptables -I FORWARD 1 -s {ip} -j DROP")
+        r1.cmd(f"iptables -I FORWARD 1 -d {ip} -j DROP")
+        r1.cmd(f"iptables -I INPUT 1 -s {ip} -j DROP")
 
     info(f"[FIREWALL] 🔒 已封禁 {ip}，原因: {reason}，时长: {duration}s\n")
 

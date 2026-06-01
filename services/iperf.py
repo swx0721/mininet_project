@@ -30,9 +30,8 @@ def start_iperf_server(server, ports=None, skip_kill=False):
 
 def start_dual_iperf(server1, server2):
     """
-    在两个服务器上分别启动 iperf3 服务。
-    Server1: 端口 5201-5204
-    Server2: 端口 5201-5202
+    在两个服务器上分别启动 iperf3 服务（对称端口）。
+    两台服务器均开放 5201-5204 端口，确保 RR 分配时所有流都能命中。
 
     ⚠️ 关键：由于 Mininet 节点共享宿主机 PID 命名空间，
     必须先统一清理所有残留 iperf3 进程，再分别启动两个服务器。
@@ -45,8 +44,10 @@ def start_dual_iperf(server1, server2):
     time.sleep(1.5)
 
     # === 启动两个服务器（skip_kill=True 避免互相误杀）===
+    # 对称端口：两服务器均开放 5201-5204，确保 QoS 消融实验中
+    # office1(TCP:5203)、finance_probe(UDP:5204) 被 RR 分到 Server2 时也能正常工作
     start_iperf_server(server1, ports=[5201, 5202, 5203, 5204], skip_kill=True)
-    start_iperf_server(server2, ports=[5201, 5202], skip_kill=True)
+    start_iperf_server(server2, ports=[5201, 5202, 5203, 5204], skip_kill=True)
 
     # === 等待端口完全打开 ===
     time.sleep(2)
@@ -54,7 +55,7 @@ def start_dual_iperf(server1, server2):
     # === 验证端口是否打开 ===
     for server, name, ports in [
         (server1, "Server1", [5201, 5202, 5203, 5204]),
-        (server2, "Server2", [5201, 5202])
+        (server2, "Server2", [5201, 5202, 5203, 5204])
     ]:
         for port in ports:
             result = server.cmd(

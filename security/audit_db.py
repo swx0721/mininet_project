@@ -15,13 +15,15 @@ import sqlite3
 import time
 from datetime import datetime
 
-DB_PATH = "/tmp/campus_security_audit.db"
+# 数据库路径：项目根目录，确保跨环境可访问
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB_PATH = os.path.join(_PROJECT_ROOT, "campus_security_audit.db")
 
 
 def get_db_path(r1=None):
     """
     返回数据库路径。
-    在 Mininet 环境中，数据库位于路由器节点上。
+    数据库位于项目根目录，Mininet 节点与宿主机共享文件系统，均可访问。
     """
     return DB_PATH
 

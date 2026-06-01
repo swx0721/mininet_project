@@ -78,12 +78,14 @@ def apply_icmp_flood_protection(r1):
     """
     ICMP Flood 防护。
     限制 ICMP echo-request 速率 1/s，burst 5。
+    规则插入 FORWARD 链首，优先于 ESTABLISHED 等放行规则。
     """
     info("[INTRUSION] 应用 ICMP Flood 防护...\n")
-    r1.cmd("iptables -A FORWARD -p icmp --icmp-type echo-request "
+    # 逆序插入，最终顺序: limit ACCEPT → DROP
+    r1.cmd("iptables -I FORWARD 1 -p icmp --icmp-type echo-request -j DROP")
+    r1.cmd("iptables -I FORWARD 1 -p icmp --icmp-type echo-request "
            "-m limit --limit 1/s --limit-burst 5 -j ACCEPT")
-    r1.cmd("iptables -A FORWARD -p icmp --icmp-type echo-request -j DROP")
-    info("[INTRUSION] ICMP 限速已启用 (1/s, burst=5)\n")
+    info("[INTRUSION] ICMP 限速已启用 (1/s, burst=5, 链首优先级)\n")
 
 
 # ==================== TCP SYN Flood 防护 ====================
@@ -91,18 +93,17 @@ def apply_icmp_flood_protection(r1):
 def apply_syn_flood_protection(r1):
     """
     TCP SYN Flood 防护。
-    限制 SYN 包速率，超出部分 LOG + DROP。
+    限制 SYN 包速率 50/s，burst 100，超出部分 LOG + DROP。
+    规则插入 FORWARD 链首，优先于任何放行规则。
     """
     info("[INTRUSION] 应用 TCP SYN Flood 防护...\n")
-
-    # 限制 SYN 速率
-    r1.cmd("iptables -A FORWARD -p tcp --syn "
-           "-m limit --limit 50/s --limit-burst 100 -j ACCEPT")
-    r1.cmd('iptables -A FORWARD -p tcp --syn -j LOG '
+    # 逆序插入，最终顺序: limit ACCEPT → LOG → DROP
+    r1.cmd("iptables -I FORWARD 1 -p tcp --syn -j DROP")
+    r1.cmd('iptables -I FORWARD 1 -p tcp --syn -j LOG '
            '--log-prefix "SYN_FLOOD: " --log-level 4')
-    r1.cmd("iptables -A FORWARD -p tcp --syn -j DROP")
-
-    info("[INTRUSION] TCP SYN Flood 防护已启用 (50/s, burst=100)\n")
+    r1.cmd("iptables -I FORWARD 1 -p tcp --syn "
+           "-m limit --limit 50/s --limit-burst 100 -j ACCEPT")
+    info("[INTRUSION] TCP SYN Flood 防护已启用 (50/s, burst=100, 链首优先级)\n")
 
 
 # ==================== 一键应用 ====================

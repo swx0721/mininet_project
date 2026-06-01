@@ -1,59 +1,215 @@
-最新结果记录：
+最新结果记录：（消融就用B组）
 （1）Qos：（后期改一下名称，应该是final vs final without HTB，具体命名可以进一步优化）
 ============================================================
   QoS 消融实验结果 — 四维指标
 ============================================================
 区域                           协议     吞吐量(Mbps)      时延(ms)       抖动(ms)       丢包率(%)      
 ------------------------------------------------------------------------------------------
-[Baseline] 财务处 (关键业务-TCP)       tcp    38.25          10.70        N/A          N/A         
-[HTB QoS]  财务处 (关键业务-TCP)       tcp    40.82          9.96         N/A          N/A         
+[Baseline] 财务处 (关键业务-TCP)       10     41.95          12.29        N/A          N/A         
+[HTB QoS]  财务处 (关键业务-TCP)       10     43.39          11.59        N/A          N/A         
 ------------------------------------------------------------------------------------------
-[Baseline] 教学楼 (课件下载-TCP)       tcp    18.40          35.10        N/A          N/A         
-[HTB QoS]  教学楼 (课件下载-TCP)       tcp    17.18          33.87        N/A          N/A         
+[Baseline] 教学楼 (课件下载-TCP)       20     18.76          35.49        N/A          N/A         
+[HTB QoS]  教学楼 (课件下载-TCP)       20     18.09          35.80        N/A          N/A         
 ------------------------------------------------------------------------------------------
-[Baseline] 办公楼 (OA系统-TCP)       tcp    40.24          10.96        N/A          N/A         
-[HTB QoS]  办公楼 (OA系统-TCP)       tcp    44.93          9.86         N/A          N/A         
+[Baseline] 办公楼 (OA系统-TCP)       15     46.30          12.05        N/A          N/A         
+[HTB QoS]  办公楼 (OA系统-TCP)       15     47.01          11.46        N/A          N/A         
 ------------------------------------------------------------------------------------------
-[Baseline] 宿舍区 (视频流-UDP)        udp    8.00           20.22        0.31         0.0         
-[HTB QoS]  宿舍区 (视频流-UDP)        udp    8.14           18.72        0.27         0.0         
+[Baseline] 宿舍区 (视频流-UDP)        12     7.87           21.05        0.27         0.0         
+[HTB QoS]  宿舍区 (视频流-UDP)        12     8.00           20.71        0.23         0.0         
 ------------------------------------------------------------------------------------------
-[Baseline] 图书馆 (网页浏览-TCP)       tcp    28.22          20.32        N/A          N/A         
-[HTB QoS]  图书馆 (网页浏览-TCP)       tcp    28.30          18.92        N/A          N/A         
+[Baseline] 图书馆 (网页浏览-TCP)       15     27.67          21.35        N/A          N/A         
+[HTB QoS]  图书馆 (网页浏览-TCP)       15     28.30          20.41        N/A          N/A         
 ------------------------------------------------------------------------------------------
-[Baseline] 财务处 (UDP探针)          udp    7.37           10.70        0.52         0.0         
-[HTB QoS]  财务处 (UDP探针)          udp    7.33           9.96         0.42         0.0         
+[Baseline] 财务处 (UDP探针)          1      8.00           12.29        0.46         0.0         
+[HTB QoS]  财务处 (UDP探针)          1      7.33           11.59        0.49         0.0         
 ------------------------------------------------------------------------------------------
-[UTILS] 结果已保存到 /home/user/桌面/mininet_project-main/results/qos_ablation_20260531_200642.csv[UTILS] JSON 已保存到 /home/user/桌面/mininet_project-main/results/qos/qos_ablation_20260531_200642.json
+[UTILS] 结果已保存到 /home/user/桌面/mininet_project-main (1)/results/qos_ablation_20260601_235826.csv[UTILS] JSON 已保存到 /home/user/桌面/mininet_project-main (1)/results/qos/qos_ablation_20260601_235826.json
 
 [QOS_ABLATION] 实验完成！结果已保存
-user@user-virtual-machine:~/桌面/mininet_project-main$ 
 
 
 （2）负载均衡：（还是有些问题）
 ============================================================
-  负载均衡消融实验结果
-============================================================
-调度策略                       请求数      平均响应(s)        吞吐量(Mbps)      S1流量       S2流量       负载方差         Jain指数    
---------------------------------------------------------------------------------------------------------------
-Final − LB (静态绑定→过载)       178      7.4360         32.62          73.6%       26.4%       0.0557       0.8179    
-Final (Round Robin)        186      16.5506        26.78          50.0%       50.0%       0.0000       1.0000    
-[UTILS] 结果已保存到 /home/user/桌面/mininet_project-main/results/lb_ablation_20260531_201319.csv[UTILS] JSON 已保存到 /home/user/桌面/mininet_project-main/results/load_balance/lb_ablation_20260531_201319.json
+
+调度策略                       请求数      平均响应(s)        总吞吐(Mbps)     S1(Mbps)   S2(Mbps)   S1利用率      S2利用率      负载方差       Jain指数    
+
+----------------------------------------------------------------------------------------------------------------------------------
+
+Final − LB (静态绑定→过载)       40       8.3675         24.61         15.99      8.61       80.0%        43.1%        340.5916   0.9174    
+
+Final (Round Robin)        43       4.8751         27.37         14.00      13.37      70.0%        66.8%        2.5325     0.9995    
+
+  ※ 单链路瓶颈: 20 Mbps, 双链路总容量: 40 Mbps (利用率独立计算，不互斥)
+
+[UTILS] 结果已保存到 /home/user/桌面/mininet_project-main (1)/results/lb_ablation_20260601_234337.csv[UTILS] JSON 已保存到 /home/user/桌面/mininet_project-main (1)/results/load_balance/lb_ablation_20260601_234337.json
+
+
 
 [LB_ABLATION] 实验完成！
 
 （3）安全策略测试：
-user@user-virtual-machine:~/桌面/mininet_project-main$ sudo python3 main.py --experiment security_test
 ============================================================
-  实验模式 — security_test
+  校园网络拓扑已启动
 ============================================================
-Traceback (most recent call last):
-  File "/home/user/桌面/mininet_project-main/main.py", line 332, in <module>
-    main()
-  File "/home/user/桌面/mininet_project-main/main.py", line 299, in main
-    mode_experiment(args.experiment, args)
-  File "/home/user/桌面/mininet_project-main/main.py", line 219, in mode_experiment
-    from experiments.run_security_test import run_security_test
-  File "/home/user/桌面/mininet_project-main/experiments/run_security_test.py", line 22, in <module>
-    from core.topology import create_fresh_network, BOTTLENECK_BW
-ImportError: cannot import name 'BOTTLENECK_BW' from 'core.topology' (/home/user/桌面/mininet_project-main/core/topology.py)
-user@user-virtual-machine:~/桌面/mininet_project-main$ 
+子网划分方案：
+  - 宿舍区: 10.0.1.0/24 (预留: 10.0.11.0/24)
+  - 教学楼: 10.0.2.0/24 (预留: 10.0.12.0/24)
+  - 图书馆: 10.0.3.0/24 (预留: 10.0.13.0/24)
+  - 办公楼: 10.0.4.0/24 (预留: 10.0.14.0/24)
+  - 财务处: 10.0.5.0/24 (预留: 10.0.15.0/24)
+  - 服务器区: 10.0.100.0/24 (预留: 10.0.110.0/24)
+    * server1 (10.0.100.2) 通过 s_server1 接入 r1-eth5
+    * server2 (10.0.101.2) 通过 s_server2 接入 r1-eth6（独立子网，对称双链路）
+[SERVICES] 启动 Web 服务器 (端口 80, 线程化)...
+[SERVICES] 已创建 50MB 大文件 (/tmp/www/bigfile.bin)
+[SERVICES] Web 服务已启动 (http://10.0.100.2)
+[SERVICES] iperf3 服务已启动 (端口 5201)
+[SERVICES] iperf3 服务已启动 (端口 5201)
+[ACL] 应用状态防火墙规则...
+[ACL] 状态防火墙已启用 (ESTABLISHED,RELATED)
+[ACL] 应用 ACL 跨部门访问策略...
+[ACL] 配置白名单规则...
+  [+] 办公楼 (10.0.4.0/24) -> 财务处 (10.0.5.0/24): 允许
+[ACL] 配置黑名单规则（带日志审计）...
+  [-] 宿舍区→财务处: 阻止+日志
+  [-] 教学楼→财务处: 阻止+日志
+[ACL] ACL 规则已全部生效
+============================================================
+  部署入侵检测系统 (IDS)
+============================================================
+[INTRUSION] 应用 ICMP Flood 防护...
+[INTRUSION] ICMP 限速已启用 (1/s, burst=5, 链首优先级)
+[INTRUSION] 应用 TCP SYN Flood 防护...
+[INTRUSION] TCP SYN Flood 防护已启用 (50/s, burst=100, 链首优先级)
+[INTRUSION] 入侵检测系统已全部部署
+[QOS] 配置 HTB QoS: 各区域上行链路独立调度
+  [QOS] r1-eth0 (dorm): rate=6Mbps ceil=10Mbps (拓扑=10Mbps, ratio=60%) sfq
+  [QOS] r1-eth1 (teach): rate=14Mbps ceil=20Mbps (拓扑=20Mbps, ratio=70%) sfq
+  [QOS] r1-eth2 (lib): rate=21Mbps ceil=30Mbps (拓扑=30Mbps, ratio=70%) sfq
+  [QOS] r1-eth3 (office): rate=35Mbps ceil=50Mbps (拓扑=50Mbps, ratio=70%) sfq
+  [QOS] r1-eth4 (finance): rate=35Mbps ceil=50Mbps (拓扑=50Mbps, ratio=70%) sfq
+[QOS] HTB QoS 已生效: 5 条区域上行链路
+      finance/office/teach/lib → 70% 带宽保障 | dorm → 60% 限速
+
+============================================================
+  子实验 3.1: ACL 访问控制验证
+============================================================
+
+  >>> 宿舍→财务处 (应阻断)
+  [RAW] PING 10.0.5.2 (10.0.5.2) 56(84) bytes of data.
+  [RAW] 64 bytes from 10.0.5.2: icmp_seq=1 ttl=63 time=21.5 ms
+  [RAW] 64 bytes from 10.0.5.2: icmp_seq=2 ttl=63 time=30.1 ms
+  [RAW] 64 bytes from 10.0.5.2: icmp_seq=3 ttl=63 time=22.0 ms
+  [RAW] --- 10.0.5.2 ping statistics ---
+  [RAW] 3 packets transmitted, 3 received, 0% packet loss, time 2003ms
+  [RAW] rtt min/avg/max/mdev = 21.470/24.516/30.066/3.930 ms
+  => 宿舍→财务处 (应阻断): ❌ FAIL (loss=0%, ping 通)
+
+  >>> 办公→财务处 (应放行)
+  [RAW] PING 10.0.5.2 (10.0.5.2) 56(84) bytes of data.
+  [RAW] 64 bytes from 10.0.5.2: icmp_seq=1 ttl=63 time=14.3 ms
+  [RAW] 64 bytes from 10.0.5.2: icmp_seq=2 ttl=63 time=13.7 ms
+  [RAW] 64 bytes from 10.0.5.2: icmp_seq=3 ttl=63 time=13.4 ms
+  [RAW] --- 10.0.5.2 ping statistics ---
+  [RAW] 3 packets transmitted, 3 received, 0% packet loss, time 2004ms
+  [RAW] rtt min/avg/max/mdev = 13.446/13.819/14.274/0.342 ms
+  => 办公→财务处 (应放行): ✅ PASS (loss=0%, ping 通)
+
+============================================================
+  子实验 3.2: 端口扫描检测与自动封禁
+============================================================
+[INTRUSION] ⚠ 端口扫描检测: 10.0.1.2 → 10.0.100.2, 20 端口 / 10s
+[AUDIT] SQLite 安全审计中心已初始化
+[FIREWALL] 🔒 已封禁 10.0.1.2，原因: 端口扫描，时长: 300s
+  ✅ 端口扫描行为已被检测
+  ✅ 异常 IP 已被自动封禁
+  >>> 封禁后验证: ping server1 应不通...
+  [IPTABLES] DROP 规则已下发:
+    0     0 DROP       all  --  *      *       0.0.0.0/0            10.0.1.2
+    0     0 DROP       all  --  *      *       10.0.1.2             0.0.0.0/0
+  ✅ 封禁生效: dorm1 → server1 已被阻断 (loss=100%)
+  [POST-BAN] 3 packets transmitted, 0 received, 100% packet loss, time 2087ms
+  SQLite PORT_SCAN 事件: 1 条
+  SQLite BAN 事件: 1 条
+[FIREWALL] 🔓 已解封 10.0.1.2
+[FIREWALL] 所有封禁已清除
+
+============================================================
+  子实验 3.3: Flood 攻击防护
+============================================================
+  ICMP Flood 测试: 快速 ping 10 次 (间隔 0.1s)...
+  ICMP: 发送=10, 接收=5, 丢包率=50.0%
+  [ICMP] 10 packets transmitted, 5 received, 50% packet loss, time 921ms
+  [ICMP] rtt min/avg/max/mdev = 19.806/20.361/20.660/0.305 ms
+  ✅ ICMP Flood 防护生效 (检测到限速丢包)
+
+  TCP SYN Flood 测试: 并发 50 个短连接模拟 SYN 洪泛...
+  SYN Flood 结果: 成功=17, 失败/超时=0, 错误=33
+  ⚠ TCP SYN 规则存在但未触发明显限速 (可能阈值较高)
+
+============================================================
+  子实验 3.4: SQLite 安全日志审计
+============================================================
+  安全事件统计:
+    ACL_ALLOW: 1
+    ACL_DENY: 1
+    BAN: 1
+    FLOOD: 2
+    PORT_SCAN: 1
+    total: 6
+  ACL_DENY 最近事件:
+    [2026-06-02 00:50:11] dorm1 → 10.0.5.2: 宿舍→财务处 (应阻断): ❌ FAIL
+  PORT_SCAN 最近事件:
+    [2026-06-02 00:50:14] 10.0.1.2 → 10.0.100.2: 扫描端口数: 20
+  FLOOD 最近事件:
+    [2026-06-02 00:50:20] 10.0.1.2 → 10.0.100.2: TCP SYN Flood模拟: 50并发, 成功17/失败0
+    [2026-06-02 00:50:19] 10.0.1.2 → 10.0.100.2: ICMP Flood: 10发/5收, 丢包50.0%
+  BAN 最近事件:
+    [2026-06-02 00:50:14] 10.0.1.2 → N/A: 封禁原因: 端口扫描, 时长: 300s
+============================================================
+  安全策略验证结果汇总
+============================================================
+  总测试项: 6
+  通过: 1 / 失败: 5
+  ACL 测试: 2 项
+  端口扫描测试: 1 项
+  Flood 测试: 2 项
+  审计测试: 1 项
+
+======================================================================
+  SQLite 安全审计数据库 — 最近事件记录
+======================================================================
+ID    时间                     事件类型           源                  目标                 详情
+------------------------------------------------------------------------------------------------------------------------
+6     2026-06-02 00:50:20    FLOOD          10.0.1.2           10.0.100.2         TCP SYN Flood模拟: 50并发, 成功17/失败0
+5     2026-06-02 00:50:19    FLOOD          10.0.1.2           10.0.100.2         ICMP Flood: 10发/5收, 丢包50.0%
+4     2026-06-02 00:50:14    BAN            10.0.1.2           N/A                封禁原因: 端口扫描, 时长: 300s
+3     2026-06-02 00:50:14    PORT_SCAN      10.0.1.2           10.0.100.2         扫描端口数: 20
+2     2026-06-02 00:50:13    ACL_ALLOW      office1            10.0.5.2           办公→财务处 (应放行): ✅ PASS
+1     2026-06-02 00:50:11    ACL_DENY       dorm1              10.0.5.2           宿舍→财务处 (应阻断): ❌ FAIL
+======================================================================
+
+======================================================================
+  安全事件统计汇总 (Security Event Summary)
+======================================================================
+  总事件数: 6
+  事件类型                 数量       占比
+  ----------------------------------------
+  FLOOD                2         33.3% ██████
+  ACL_ALLOW            1         16.7% ███
+  ACL_DENY             1         16.7% ███
+  BAN                  1         16.7% ███
+  PORT_SCAN            1         16.7% ███
+======================================================================
+[UTILS] JSON 已保存到 /home/user/桌面/mininet_project-main (1)/results/security_test_20260602_005020.json
+
+[SECURITY_TEST] 安全策略验证实验完成！
+*** Stopping 0 controllers
+
+*** Stopping 19 links
+...................
+*** Stopping 7 switches
+s_dorm s_teach s_lib s_office s_finance s_server1 s_server2 
+*** Stopping 13 hosts
+r1 dorm1 dorm2 teach1 teach2 lib1 lib2 office1 office2 finance1 finance2 server1 server2 
+*** Done
