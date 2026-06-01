@@ -43,13 +43,15 @@ from policies.load_balance import LoadBalancer
 
 # ==================== 实验常量 ====================
 
+# QoS 消融实验使用 Round Robin LB，不使用静态映射
+# 客户端列表（不含服务器 IP，由 LoadBalancer 动态分配）
 COMPETING_CLIENTS = [
-    ("finance1", DEFAULT_STATIC_MAPPING["finance1"], "财务处 (关键业务-TCP)",  "入口1", 5201, "tcp", 10),
-    ("teach1",   DEFAULT_STATIC_MAPPING["teach1"],   "教学楼 (课件下载-TCP)",   "入口1", 5202, "tcp", 20),
-    ("office1",  DEFAULT_STATIC_MAPPING["office1"],  "办公楼 (OA系统-TCP)",     "入口1", 5203, "tcp", 15),
-    ("dorm1",    DEFAULT_STATIC_MAPPING["dorm1"],    "宿舍区 (视频流-UDP)",     "入口2", 5201, "udp", 12),
-    ("lib1",     DEFAULT_STATIC_MAPPING["lib1"],     "图书馆 (网页浏览-TCP)",   "入口2", 5202, "tcp", 15),
-    ("finance_probe", DEFAULT_STATIC_MAPPING["finance_probe"], "财务处 (UDP探针)", "入口1", 5204, "udp", 1),
+    ("finance1", "财务处 (关键业务-TCP)",  "RR动态", 5201, "tcp", 10),
+    ("teach1",   "教学楼 (课件下载-TCP)",   "RR动态", 5202, "tcp", 20),
+    ("office1",  "办公楼 (OA系统-TCP)",     "RR动态", 5203, "tcp", 15),
+    ("dorm1",    "宿舍区 (视频流-UDP)",     "RR动态", 5201, "udp", 12),
+    ("lib1",     "图书馆 (网页浏览-TCP)",   "RR动态", 5202, "tcp", 15),
+    ("finance_probe", "财务处 (UDP探针)", "RR动态", 5204, "udp", 1),
 ]
 
 # 主机别名：finance_probe 与 finance1 共用同一个 Mininet 节点
@@ -62,25 +64,39 @@ CLIENT_IPS = {
     "office1": "10.0.4.2", "finance1": "10.0.5.2",
 }
 
-POISSON_LAMBDA = {
+POISSON_LAMBDA = {}
+
+# ==================== 场景定义 ====================
+
+# 场景 A：中等均衡负载 — 两服务器负载接近
+#   S1 λ 合计 = 0.4+0.3+0.2     = 0.9 (50%)
+#   S2 λ 合计 = 0.3+0.2+0.2(udp) = 0.7 (39%)
+QOS_SCENARIO_A = {
+    "finance1": 0.4, "teach1": 0.3, "office1": 0.2,
+    "dorm1": 0.3, "lib1": 0.2, "finance_probe": 0.2,
+}
+
+# 场景 B：Server1 高负载 — S1 明显高于 S2（默认）
+#   S1 λ 合计 = 0.5+0.4+0.4+0.25(udp) = 1.55 (86%)
+#   S2 λ 合计 = 0.4+0.3              = 0.70 (39%)
+QOS_SCENARIO_B = {
     "finance1": 0.5, "teach1": 0.4, "office1": 0.4,
     "dorm1": 0.4, "lib1": 0.3, "finance_probe": 0.25,
 }
+
+SCENARIO_LAMBDA_MAP = {"A": QOS_SCENARIO_A, "B": QOS_SCENARIO_B}
+
+
+def _set_qos_scenario(scenario: str):
+    """设置当前 QoS 消融实验场景并更新全局 POISSON_LAMBDA。"""
+    global POISSON_LAMBDA
+    POISSON_LAMBDA = SCENARIO_LAMBDA_MAP[scenario]
+    return scenario
 
 FLOW_DURATION = 5
 TOTAL_EXPERIMENT_TIME = 60
 PING_COUNT = 10
 PING_INTERVAL = 0.2
-
-
-def get_iperf_port(client_spec):
-    return client_spec[4]
-
-def get_protocol(client_spec):
-    return client_spec[5]
-
-def get_target_bw(client_spec):
-    return client_spec[6]
 
 
 # ==================== 输出解析 ====================
@@ -213,8 +229,7 @@ def setup_network_for_policy(policy_type):
 def run_competitive_measurement(net, hosts, duration):
     """
     使用 popen() 实现真正的多线程并发 iperf3 流量竞争。
-    每个客户端线程通过 popen + communicate 独立运行 iperf3，
-    确保同一主机上的多个流（如 finance1 TCP + finance_probe UDP）可以并发执行。
+    使用 Round Robin LoadBalancer 动态分配目标服务器。
     """
     # 启动两个服务入口的 iperf3
     server1, server2 = get_server_hosts(hosts)
@@ -228,6 +243,9 @@ def run_competitive_measurement(net, hosts, duration):
         start_dual_iperf(server1, server2)
         # 充分等待服务就绪
         time.sleep(3)
+
+    # 创建 Round Robin 负载均衡器（QoS 消融实验中必须使用 RR）
+    load_balancer = LoadBalancer(algorithm="round_robin")
 
     results_lock = threading.Lock()
     flow_samples = {client_spec[0]: [] for client_spec in COMPETING_CLIENTS}
@@ -255,8 +273,11 @@ def run_competitive_measurement(net, hosts, duration):
         tp = parse_iperf_output(result)
         return {"throughput_mbps": tp} if tp is not None else None
 
-    def run_client_poisson(client_name, target_ip, port, desc, protocol, target_bw):
-        """持续泊松到达：实验窗口内反复产生短流。"""
+    def run_client_poisson(client_name, desc, port, protocol, target_bw):
+        """
+        持续泊松到达：实验窗口内反复产生短流。
+        使用 LoadBalancer 动态获取目标服务器。
+        """
         host_name = CLIENT_HOSTS.get(client_name, client_name)
         client = hosts.get(host_name)
         if client is None:
@@ -269,6 +290,8 @@ def run_competitive_measurement(net, hosts, duration):
                 break
             time.sleep(delay)
 
+            # 通过 LoadBalancer 动态获取目标服务器
+            target_ip = load_balancer.get_server(client_name)
             cmd = build_iperf_cmd(target_ip, port, protocol, target_bw)
             flow_index += 1
 
@@ -298,14 +321,15 @@ def run_competitive_measurement(net, hosts, duration):
 
     threads = []
     for client_spec in COMPETING_CLIENTS:
-        client_name, target_ip, desc, entrance = client_spec[:4]
-        port = get_iperf_port(client_spec)
-        protocol = get_protocol(client_spec)
-        target_bw = get_target_bw(client_spec)
+        client_name = client_spec[0]
+        desc = client_spec[1]
+        port = client_spec[3]
+        protocol = client_spec[4]
+        target_bw = client_spec[5]
 
         t = threading.Thread(
             target=run_client_poisson,
-            args=(client_name, target_ip, port, desc, protocol, target_bw),
+            args=(client_name, desc, port, protocol, target_bw),
             daemon=True
         )
         threads.append(t)
@@ -378,7 +402,8 @@ def run_latency_measurement(net, hosts, measure_after=2):
     alias_clients = []
 
     for client_spec in COMPETING_CLIENTS:
-        client_name, _, desc, _ = client_spec[:4]
+        client_name = client_spec[0]
+        desc = client_spec[1]
         host_name = CLIENT_HOSTS.get(client_name, client_name)
         if host_name in measured_hosts:
             alias_clients.append((client_name, host_name, desc))
@@ -475,20 +500,44 @@ def run_single_policy_experiment(policy_type, label):
 
 # ==================== 主入口 ====================
 
-def run_qos_ablation(server_ip="10.0.100.2", duration=None):
+def run_qos_ablation(server_ip="10.0.100.2", duration=None, scenario="B"):
     """
     运行 QoS 消融实验。
 
     对比:
       1. Baseline (pfifo) — 代表 Final − QoS
       2. HTB QoS — 代表 Final
+
+    参数:
+        scenario: "A"=中等均衡负载, "B"=Server1 高负载不均 (默认 B)
     """
+    scenario = scenario.upper()
+    if scenario not in ("A", "B"):
+        scenario = "B"
+    _set_qos_scenario(scenario)
+
     if duration is not None:
         global TOTAL_EXPERIMENT_TIME
         TOTAL_EXPERIMENT_TIME = duration
 
     ensure_dirs()
-    info("[QOS_ABLATION] 开始 QoS 消融实验\n")
+
+    # 打印场景信息
+    s1_lambda = POISSON_LAMBDA.get("finance1", 0) + POISSON_LAMBDA.get("teach1", 0) + \
+                POISSON_LAMBDA.get("office1", 0) + POISSON_LAMBDA.get("finance_probe", 0)
+    s2_lambda = POISSON_LAMBDA.get("dorm1", 0) + POISSON_LAMBDA.get("lib1", 0)
+    info(f"[QOS_ABLATION] ====== 场景 {scenario} ======\n")
+    if scenario == "A":
+        info("[QOS_ABLATION] 负载模式: 中等均衡 — 两服务器负载接近\n")
+    else:
+        info("[QOS_ABLATION] 负载模式: Server1 高负载不均 — S1 明显高于 S2\n")
+    info(f"[QOS_ABLATION] λ 参数: finance1={POISSON_LAMBDA['finance1']}, "
+         f"teach1={POISSON_LAMBDA['teach1']}, office1={POISSON_LAMBDA['office1']}, "
+         f"dorm1={POISSON_LAMBDA['dorm1']}, lib1={POISSON_LAMBDA['lib1']}, "
+         f"probe={POISSON_LAMBDA['finance_probe']}\n")
+    info(f"[QOS_ABLATION] S1 λ 合计={s1_lambda:.2f}, S2 λ 合计={s2_lambda:.2f}, "
+         f"总 λ={s1_lambda+s2_lambda:.2f}\n")
+    info(f"[QOS_ABLATION] 流持续时间={FLOW_DURATION}s, 实验时长={TOTAL_EXPERIMENT_TIME}s\n")
 
     # 实验组 1: Final − QoS (Baseline)
     baseline_data, baseline_label = run_single_policy_experiment(

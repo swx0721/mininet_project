@@ -101,6 +101,8 @@ def parse_args():
     # ---- 实验参数 ----
     parser.add_argument("--duration", type=int, default=None,
                         help="实验持续时长（秒）")
+    parser.add_argument("--scenario", type=str, default="B", choices=["A", "B"],
+                        help="消融实验负载场景: A=中等均衡, B=高负载不均 (默认 B)")
     parser.add_argument("--repeat", type=int, default=3,
                         help="实验重复次数（默认 3）")
 
@@ -209,11 +211,11 @@ def mode_experiment(experiment_name, args):
 
     if experiment_name == "qos_ablation":
         from experiments.run_qos_ablation import run_qos_ablation
-        run_qos_ablation(duration=args.duration)
+        run_qos_ablation(duration=args.duration, scenario=args.scenario)
 
     elif experiment_name == "lb_ablation":
         from experiments.run_lb_ablation import run_lb_ablation
-        run_lb_ablation(duration=args.duration or 60)
+        run_lb_ablation(duration=args.duration or 60, scenario=args.scenario)
 
     elif experiment_name == "security_test":
         from experiments.run_security_test import run_security_test
@@ -234,7 +236,7 @@ def mode_auto(args):
     info("\n[实验 1/3] QoS 消融实验\n")
     try:
         from experiments.run_qos_ablation import run_qos_ablation
-        run_qos_ablation(duration=args.duration)
+        run_qos_ablation(duration=args.duration, scenario=args.scenario)
         all_results.append(("QoS 消融实验", "完成", ""))
     except Exception as e:
         info(f"[AUTO] QoS 实验失败: {e}\n")
@@ -244,7 +246,7 @@ def mode_auto(args):
     info("\n[实验 2/3] 负载均衡消融实验\n")
     try:
         from experiments.run_lb_ablation import run_lb_ablation
-        run_lb_ablation(duration=args.duration or 60)
+        run_lb_ablation(duration=args.duration or 60, scenario=args.scenario)
         all_results.append(("负载均衡消融实验", "完成", ""))
     except Exception as e:
         info(f"[AUTO] 负载均衡实验失败: {e}\n")

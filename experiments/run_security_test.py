@@ -78,8 +78,6 @@ def test_acl(sub_net, sub_r1, sub_hosts):
     tests = [
         ("dorm1", "finance1", "10.0.5.2", False, "宿舍→财务处 (应阻断)"),
         ("office1", "finance1", "10.0.5.2", True, "办公→财务处 (应放行)"),
-        ("dorm1", "hr1", "10.0.6.2", False, "宿舍→人事处 (应阻断)"),
-        ("office1", "hr1", "10.0.6.2", True, "办公→人事处 (应放行)"),
     ]
 
     for src_name, dst_name, dst_ip, expect_pass, desc in tests:

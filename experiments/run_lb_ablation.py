@@ -34,9 +34,8 @@ from mininet.log import info
 from utils import save_to_csv, save_to_json, print_separator, timestamp, ensure_dirs
 
 from core.topology import create_fresh_network, SERVER1_IP, SERVER2_IP
-from core.server_cluster import get_server_hosts
+from core.server_cluster import get_server_hosts, DEFAULT_STATIC_MAPPING
 from services.web import start_web_server, create_test_file
-from policies.qos import clear_qos
 from policies.load_balance import LoadBalancer
 
 # 负载均衡实验：服务器链路瓶颈带宽 (Mbps)
@@ -89,10 +88,34 @@ CLIENT_NODES = [
     ("teach1", "教学楼 (普通)"),
 ]
 
-LOAD_LAMBDA = {
+LOAD_LAMBDA = {}
+
+# ==================== 场景定义 ====================
+
+# 场景 A：中等均衡负载 — 两服务器负载接近
+#   S1 λ 合计 = 0.10+0.10+0.05 = 0.25 → 50%利用率
+#   S2 λ 合计 = 0.10+0.15       = 0.25 → 50%利用率
+LB_SCENARIO_A = {
+    "finance1": 0.10, "teach1": 0.10, "office1": 0.05,
+    "dorm1": 0.10, "lib1": 0.15,
+}
+
+# 场景 B：Server1 高负载 — S1 明显高于 S2（默认）
+#   S1 λ 合计 = 0.18+0.12+0.10 = 0.40 → 80%利用率（中高负载，非过载）
+#   S2 λ 合计 = 0.12+0.08       = 0.20 → 40%利用率（中低负载，有余量）
+LB_SCENARIO_B = {
     "finance1": 0.18, "teach1": 0.12, "office1": 0.10,
     "dorm1": 0.12, "lib1": 0.08,
 }
+
+SCENARIO_LAMBDA_MAP = {"A": LB_SCENARIO_A, "B": LB_SCENARIO_B}
+
+
+def _set_lb_scenario(scenario: str):
+    """设置当前 LB 消融实验场景并更新全局 LOAD_LAMBDA。"""
+    global LOAD_LAMBDA
+    LOAD_LAMBDA = SCENARIO_LAMBDA_MAP[scenario]
+    return scenario
 
 SERVER_LABELS = {SERVER1_IP: "Server1", SERVER2_IP: "Server2"}
 SERVERS = [SERVER1_IP, SERVER2_IP]
@@ -275,19 +298,27 @@ def run_single_lb_experiment(algorithm, algo_label, duration=60):
         start_web_server(server2)
         create_test_file(server2, "lbfile.bin", LOAD_FILE_MB)
 
-    # ====== 最小化安全配置：仅 flush + ACCEPT，排除 iptables 干扰 ======
-    r1.cmd("iptables -F 2>/dev/null || true")
-    r1.cmd("iptables -X 2>/dev/null || true")
-    r1.cmd("iptables -P FORWARD ACCEPT")
-    r1.cmd("iptables -P INPUT ACCEPT")
-    r1.cmd("iptables -P OUTPUT ACCEPT")
-    r1.cmd("sysctl -w net.ipv4.ip_forward=1 2>/dev/null || true")
-    info("[LB_ABLATION] iptables 已清空，ip_forward 已启用\n")
+    # ====== LB 消融实验参数 ======
+    # 实验设计：(1,1,1) vs (1,0,1) — 仅改变负载均衡，保留 QoS 和 Security
+    # 
+    # 关键：
+    #   1. 保留所有 ACL 规则（不能 iptables -F/-X）
+    #   2. 保留区域上行链路 QoS（apply_htb_policy）
+    #   3. 仅在服务器出口增加瓶颈（不覆盖拓扑级 QoS）
+    #   4. 算法在 Static（对照组） vs Round Robin（实验组）之间切换
 
-    # LB 实验专用：服务器出口瓶颈（正确方向：服务器 egress）
-    # 下载流量方向：server → switch → router → client
-    # 将 HTB 放在服务器网卡上，整形的是服务器发出的数据包（包括文件下载响应）
-    clear_qos(r1)
+    from security.acl import apply_stateful_firewall, apply_acl_policies, apply_default_accept
+    from policies.qos import apply_htb_policy
+
+    # 应用安全策略（保持 Security=1）
+    apply_default_accept(r1)
+    apply_stateful_firewall(r1)
+    apply_acl_policies(r1)
+    info("[LB_ABLATION] ACL 安全策略已启用（Security=1）\n")
+
+    # 应用区域上行链路 QoS（保持 QoS=1）
+    apply_htb_policy(r1)
+    info("[LB_ABLATION] 区域上行链路 HTB QoS 已启用（QoS=1）\n")
     for server_node, ifname in [(server1, "server1-eth0"), (server2, "server2-eth0")]:
         if server_node:
             # 清除 TCLink 自带 qdisc，替换为实验用 HTB
@@ -329,8 +360,8 @@ def run_single_lb_experiment(algorithm, algo_label, duration=60):
             info(f"[LB_ABLATION]   curl {label}({ip}): {out.strip()} (wall={t1-t0:.2f}s)\n")
     info("[LB_ABLATION] === 诊断结束 ===\n")
 
-    # 负载均衡器（Static 模式使用故意失衡的映射）
-    static_map = LB_STATIC_MAPPING if algorithm == "static" else None
+    # 负载均衡器（Static 模式使用 DEFAULT_STATIC_MAPPING）
+    static_map = DEFAULT_STATIC_MAPPING if algorithm == "static" else None
     balancer = LoadBalancer(algorithm=algorithm, static_mapping=static_map)
 
     info(f"[LB_ABLATION] 开始 {algo_label} 实验...\n")
@@ -344,17 +375,13 @@ def run_single_lb_experiment(algorithm, algo_label, duration=60):
     return stats
 
 
-def run_lb_ablation(duration=60):
+def run_lb_ablation(duration=60, scenario="B"):
     """
     运行负载均衡消融实验。
 
     实验场景——双服务器按区域分工：
-      Server1：财务处（λ=0.10）、教学楼（λ=0.05）、办公楼（λ=0.05）
-      Server2：宿舍区（λ=0.07）、图书馆（λ=0.05）
-
-    λ 设计：总需求 0.32 ≈ 36 Mbps，略低于双链路总容量 40 Mbps。
-    Static 下 S1 λ=0.20(120%利用率)过载、S2 λ=0.12(70%)有余量；
-    RR 下均摊至各约 95%利用率。
+      Server1：财务处、教学楼、办公楼
+      Server2：宿舍区、图书馆
 
     对比:
       1. Final − LB (Static):  静态绑定 → 各区域固定服务器
@@ -363,13 +390,38 @@ def run_lb_ablation(duration=60):
     消融逻辑:
       去掉 LB → 泊松到达随机性 + 瓶颈处排队不均 → 性能劣化
       加入 LB → 请求均匀分配 → 瓶颈均摊 → 吞吐提升、时延下降
+
+    参数:
+        scenario: "A"=中等均衡负载, "B"=Server1 高负载不均 (默认 B)
     """
+    scenario = scenario.upper()
+    if scenario not in ("A", "B"):
+        scenario = "B"
+    _set_lb_scenario(scenario)
+
+    # 计算场景参数
+    s1_lambda = LOAD_LAMBDA.get("finance1", 0) + LOAD_LAMBDA.get("teach1", 0) + \
+                LOAD_LAMBDA.get("office1", 0)
+    s2_lambda = LOAD_LAMBDA.get("dorm1", 0) + LOAD_LAMBDA.get("lib1", 0)
+    total_demand = (s1_lambda + s2_lambda) * LOAD_FILE_MB * 8  # Mbps
+    capacity_pct = total_demand / (LB_BOTTLENECK_MBPS * 2) * 100
+
     ensure_dirs()
-    info("[LB_ABLATION] 开始负载均衡消融实验\n")
-    info("[LB_ABLATION] 区域分工: Server1 ← finance1/teach1/office1 (λ=0.40), "
-         "Server2 ← dorm1/lib1 (λ=0.20)\n")
+    info(f"[LB_ABLATION] ====== 场景 {scenario} ======\n")
+    if scenario == "A":
+        info("[LB_ABLATION] 负载模式: 中等均衡 — 两服务器负载接近\n")
+    else:
+        info("[LB_ABLATION] 负载模式: Server1 高负载不均 — S1 明显高于 S2\n")
+    info(f"[LB_ABLATION] λ 参数: finance1={LOAD_LAMBDA['finance1']}, "
+         f"teach1={LOAD_LAMBDA['teach1']}, office1={LOAD_LAMBDA['office1']}, "
+         f"dorm1={LOAD_LAMBDA['dorm1']}, lib1={LOAD_LAMBDA['lib1']}\n")
+    info(f"[LB_ABLATION] S1 λ 合计={s1_lambda:.2f} (Static→{s1_lambda*LOAD_FILE_MB*8/LB_BOTTLENECK_MBPS*100:.0f}%util), "
+         f"S2 λ 合计={s2_lambda:.2f} (Static→{s2_lambda*LOAD_FILE_MB*8/LB_BOTTLENECK_MBPS*100:.0f}%util), "
+         f"总 λ={s1_lambda+s2_lambda:.2f}\n")
+    info(f"[LB_ABLATION] 区域分工: Server1 ← finance1/teach1/office1 (λ={s1_lambda:.2f}), "
+         f"Server2 ← dorm1/lib1 (λ={s2_lambda:.2f})\n")
     info(f"[LB_ABLATION] 文件: {LOAD_FILE_MB}MB, 瓶颈: {LB_BOTTLENECK_MBPS}Mbps×2 "
-         f"(总需求24Mbps=60%容量, 中负载稳定区)\n")
+         f"(总需求{total_demand:.0f}Mbps={capacity_pct:.0f}%容量)\n")
 
     # 实验组 1: Final − LB (Static) —— Server1 过载
     static_stats = run_single_lb_experiment("static", "Final − LB (静态绑定→过载)", duration)

@@ -12,7 +12,6 @@ modules:
     algorithm: htb
     priority_subnets:
       - 10.0.5.0/24    # 财务处
-      - 10.0.6.0/24    # 人事处
   load_balance:
     enabled: true
     algorithm: round_robin

@@ -1,10 +1,10 @@
 """
 policies/qos.py — QoS 流量控制策略
 
-QoS 作用位置：各区域交换机 → 核心路由器的上行链路（r1-eth0 ~ r1-eth4, r1-eth7）
+QoS 作用位置：各区域交换机 → 核心路由器的上行链路（r1-eth0 ~ r1-eth4）
   - 每个区域上行链路独立限速与分类
-  - 财务处/人事处获得较高带宽保障
-  - 宿舍区获得较低带宽限制
+  - 财务处获得较高带宽保障（70%）
+  - 宿舍区获得较低带宽限制（60%）
   - 服务器链路（r1-eth5, r1-eth6）不参与 QoS，保持独立对称
 
 三种策略:
@@ -25,16 +25,15 @@ ZONE_INTF_MAP = {
     "r1-eth2": "lib",
     "r1-eth3": "office",
     "r1-eth4": "finance",
-    "r1-eth7": "hr",
+
 }
 
 # HTB QoS 各区域带宽分配（Mbps）
-#   finance/hr: 保底 80% 拓扑带宽（关键业务保障）
-#   teach/lib/office: 保底 70% 拓扑带宽
+#   finance/office: 保底 70% 拓扑带宽 （其中财务需求较高，办公需求预留空间）
+#   teach/lib: 保底 70% 拓扑带宽
 #   dorm: 保底 60% 拓扑带宽（视频流限速）
 HTB_RATE_RATIO = {
-    "finance": 0.80,
-    "hr":      0.80,
+    "finance": 0.70,
     "office":  0.70,
     "teach":   0.70,
     "lib":     0.70,
@@ -79,7 +78,8 @@ def apply_htb_policy(r1, bottleneck_bw=None):
       - 队列类型: sfq 公平队列（防同区域 TCP 流踩踏）
 
     优先级通过各区域的 rate/ceil 比例隐式实现：
-      - finance/hr: 80% 拓扑带宽保障
+      - finance: 70% 拓扑带宽保障（关键财务业务）
+      - office/teach/lib: 70% 拓扑带宽保障
       - dorm: 60% 拓扑带宽（视频流受限）
     """
     info(f"[QOS] 配置 HTB QoS: 各区域上行链路独立调度\n")
@@ -102,13 +102,12 @@ def apply_htb_policy(r1, bottleneck_bw=None):
              f"(拓扑={topo_bw}Mbps, ratio={ratio:.0%}) sfq\n")
 
     info(f"[QOS] HTB QoS 已生效: {len(ZONE_UPLINKS)} 条区域上行链路\n"
-         f"      finance/hr → 80% 带宽保障 | dorm → 60% 限速 | 其余 → 70%\n")
+         f"      finance/office/teach/lib → 70% 带宽保障 | dorm → 60% 限速\n")
 
 
 def clear_qos(r1):
-    """清除所有 QoS 配置（含服务器链路）。"""
+    """清除所有 QoS 配置（仅区域上行链路，不涉及服务器链路）。"""
     info("[QOS] 清除所有 QoS 配置...\n")
-    for dev in [f"r1-eth{i}" for i in range(8)]:
-        r1.cmd(f"tc qdisc del dev {dev} root 2>/dev/null || true")
-    r1.cmd("iptables -t mangle -F 2>/dev/null || true")
+    for intf in ZONE_UPLINKS:
+        r1.cmd(f"tc qdisc del dev {intf} root 2>/dev/null || true")
     info("[QOS] QoS 配置已清除\n")

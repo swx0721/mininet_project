@@ -33,7 +33,6 @@ SUBNET_CONFIG = {
     "lib":     {"net": "10.0.3.0/24", "gw": "10.0.3.1",   "reserve": "10.0.13.0/24"},
     "office":  {"net": "10.0.4.0/24", "gw": "10.0.4.1",   "reserve": "10.0.14.0/24"},
     "finance": {"net": "10.0.5.0/24", "gw": "10.0.5.1",   "reserve": "10.0.15.0/24"},
-    "hr":      {"net": "10.0.6.0/24", "gw": "10.0.6.1",   "reserve": "10.0.16.0/24"},
     "server":  {"net": "10.0.100.0/24", "gw": "10.0.100.1", "reserve": "10.0.110.0/24"},
     "server2": {"net": "10.0.101.0/24", "gw": "10.0.101.1", "reserve": "10.0.111.0/24"},
 }
@@ -49,8 +48,6 @@ HOST_DEFINITIONS = [
     ("office2", "10.0.4.3/24",   "office"),
     ("finance1","10.0.5.2/24",   "finance"),
     ("finance2","10.0.5.3/24",   "finance"),
-    ("hr1",     "10.0.6.2/24",   "hr"),
-    ("hr2",     "10.0.6.3/24",   "hr"),
     ("server1", "10.0.100.2/24", "server"),    # s_server1 → r1-eth5
     ("server2", "10.0.101.2/24", "server2"),   # s_server2 → r1-eth6（独立子网）
 ]
@@ -63,7 +60,6 @@ UPLINK_CONFIG = [
     ("lib",     "r1-eth2", 100,  "5ms"),
     ("office",  "r1-eth3", 200,  "2ms"),
     ("finance", "r1-eth4", 200,  "2ms"),
-    ("hr",      "r1-eth7", 200,  "2ms"),
 ]
 
 ROUTER_IPS = {
@@ -74,7 +70,6 @@ ROUTER_IPS = {
     "r1-eth4": "10.0.5.1/24",
     "r1-eth5": "10.0.100.1/24",   # 服务器1 独立链路（s_server1）
     "r1-eth6": "10.0.101.1/24",   # 服务器2 独立链路（s_server2，对称）
-    "r1-eth7": "10.0.6.1/24",
 }
 
 DEFAULT_LINK_PARAMS = {
@@ -83,7 +78,6 @@ DEFAULT_LINK_PARAMS = {
     "lib":     {"bw": 30,  "delay": "5ms"},
     "office":  {"bw": 50,  "delay": "2ms"},
     "finance": {"bw": 50,  "delay": "2ms"},
-    "hr":      {"bw": 50,  "delay": "2ms"},
     "server":  {"bw": 100, "delay": "1ms"},   # 服务器1 独立链路
     "server2": {"bw": 100, "delay": "1ms"},   # 服务器2 独立链路（对称）
 }
@@ -91,7 +85,7 @@ DEFAULT_LINK_PARAMS = {
 # ==================== 全局常量 ====================
 
 # 各区域上行链路接口（QoS 作用位置）
-ZONE_UPLINKS = ["r1-eth0", "r1-eth1", "r1-eth2", "r1-eth3", "r1-eth4", "r1-eth7"]
+ZONE_UPLINKS = ["r1-eth0", "r1-eth1", "r1-eth2", "r1-eth3", "r1-eth4"]
 
 # 服务器出口接口（负载均衡实验独立链路）
 SERVER1_INTF = "r1-eth5"
@@ -108,7 +102,6 @@ ZONE_BASELINE_BW = {
     "r1-eth2": 30,   # lib
     "r1-eth3": 50,   # office
     "r1-eth4": 50,   # finance
-    "r1-eth7": 50,   # hr
 }
 
 
@@ -133,14 +126,14 @@ def build_topology(with_cli=True, access_bw=None, access_delay=None,
 
     # ---------- 创建交换机 ----------
     switches = {}
-    zone_order = ["dorm", "teach", "lib", "office", "finance", "hr"]
+    zone_order = ["dorm", "teach", "lib", "office", "finance"]
     for zone in zone_order:
         dpid = f"000000000000{zone_order.index(zone) + 1:04x}"
         switches[zone] = net.addSwitch(f"s_{zone}", dpid=dpid)
     
     # 服务器双交换机（对称结构）
-    switches["s_server1"] = net.addSwitch("s_server1", dpid="0000000000000007")
-    switches["s_server2"] = net.addSwitch("s_server2", dpid="0000000000000008")
+    switches["s_server1"] = net.addSwitch("s_server1", dpid="0000000000000006")
+    switches["s_server2"] = net.addSwitch("s_server2", dpid="0000000000000007")
 
     # ---------- 创建主机 ----------
     hosts = {}
