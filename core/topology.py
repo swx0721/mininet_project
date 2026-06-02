@@ -56,10 +56,10 @@ HOST_DEFINITIONS = [
 # 注意：服务器双链路在 build_topology 中特殊处理（不在此列表中）
 UPLINK_CONFIG = [
     ("dorm",    "r1-eth0", 100,  "5ms"),
-    ("teach",   "r1-eth1", 100,  "10ms"),
+    ("teach",   "r1-eth1", 100,  "5ms"),
     ("lib",     "r1-eth2", 100,  "5ms"),
-    ("office",  "r1-eth3", 200,  "2ms"),
-    ("finance", "r1-eth4", 200,  "2ms"),
+    ("office",  "r1-eth3", 100,  "5ms"),
+    ("finance", "r1-eth4", 100,  "5ms"),
 ]
 
 ROUTER_IPS = {
@@ -73,11 +73,11 @@ ROUTER_IPS = {
 }
 
 DEFAULT_LINK_PARAMS = {
-    "dorm":    {"bw": 10,  "delay": "5ms"},
-    "teach":   {"bw": 20,  "delay": "10ms"},
-    "lib":     {"bw": 30,  "delay": "5ms"},
-    "office":  {"bw": 50,  "delay": "2ms"},
-    "finance": {"bw": 50,  "delay": "2ms"},
+    "dorm":    {"bw": 100, "delay": "5ms"},
+    "teach":   {"bw": 100, "delay": "5ms"},
+    "lib":     {"bw": 100, "delay": "5ms"},
+    "office":  {"bw": 100, "delay": "5ms"},
+    "finance": {"bw": 100, "delay": "5ms"},
     "server":  {"bw": 100, "delay": "1ms"},   # 服务器1 独立链路
     "server2": {"bw": 100, "delay": "1ms"},   # 服务器2 独立链路（对称）
 }
@@ -97,11 +97,11 @@ SERVER2_IP = "10.0.101.2"   # 独立子网，通过 s_server2 → r1-eth6
 
 # 各区域上行链路基准带宽（用于 QoS 实验，基于 DEFAULT_LINK_PARAMS）
 ZONE_BASELINE_BW = {
-    "r1-eth0": 10,   # dorm
-    "r1-eth1": 20,   # teach
-    "r1-eth2": 30,   # lib
-    "r1-eth3": 50,   # office
-    "r1-eth4": 50,   # finance
+    "r1-eth0": 100,  # dorm
+    "r1-eth1": 100,  # teach
+    "r1-eth2": 100,  # lib
+    "r1-eth3": 100,  # office
+    "r1-eth4": 100,  # finance
 }
 
 
