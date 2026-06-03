@@ -51,9 +51,10 @@ def parse_args():
   final       CampusNet-Final（全部模块）
 
 实验选项:
-  qos_ablation     QoS 消融实验
-  lb_ablation      负载均衡消融实验
-  security_test    安全策略验证实验
+  qos_ablation      QoS 消融实验
+  lb_ablation       负载均衡消融实验
+  security_test     安全策略验证实验
+  security_ablation 安全策略消融实验
 
 示例:
   python main.py --model final
@@ -72,7 +73,7 @@ def parse_args():
 
     # ---- 实验选择 ----
     parser.add_argument("--experiment", type=str, default=None,
-                        choices=["qos_ablation", "lb_ablation", "security_test"],
+                        choices=["qos_ablation", "lb_ablation", "security_test", "security_ablation"],
                         help="运行指定实验")
     parser.add_argument("--auto", action="store_true",
                         help="一键运行全部实验")
@@ -220,6 +221,10 @@ def mode_experiment(experiment_name, args):
     elif experiment_name == "security_test":
         from experiments.run_security_test import run_security_test
         run_security_test()
+
+    elif experiment_name == "security_ablation":
+        from experiments.run_security_ablation import run_security_ablation
+        run_security_ablation()
 
 
 def mode_auto(args):
