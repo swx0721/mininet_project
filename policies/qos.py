@@ -1,19 +1,20 @@
 """
 policies/qos.py — QoS 流量控制策略
 
-QoS 作用位置：各区域交换机 → 核心路由器的上行链路（r1-eth0 ~ r1-eth4）
-  - 每个区域上行链路独立限速与分类
-  - 财务处获得较高带宽保障（70%）
-  - 宿舍区获得较低带宽限制（60%）
-  - 服务器链路（r1-eth5, r1-eth6）不参与 QoS，保持独立对称
+QoS 作用位置：核心路由器 → 服务器的出口链路（r1-eth5, r1-eth6）
+  - 实验瓶颈在服务器出口（默认 20Mbps），QoS 配在此处控制竞争
+  - HTB: 为每个区域创建独立 class + tc filter（按源 IP 子网分类）
+  - Baseline: pfifo 公平竞争（无分类，作为消融对照组）
+  - 财务处获得较高带宽保障（70% 瓶颈带宽）
+  - 宿舍区获得较低带宽限制（60% 瓶颈带宽）
 
 三种策略:
-  1. baseline_policy:  pfifo FIFO（无 QoS，仅拓扑级带宽）
-  2. htb_policy:       HTB 分层 + sfq 公平队列（默认 QoS 策略）
+  1. baseline_policy:  pfifo FIFO（无 QoS，平等竞争）
+  2. htb_policy:       HTB 分层 + sfq 公平队列（按区域优先级调度）
 """
 
 from mininet.log import info
-from core.topology import ZONE_UPLINKS, ZONE_BASELINE_BW
+from core.topology import ZONE_UPLINKS, ZONE_BASELINE_BW, SERVER1_INTF, SERVER2_INTF
 
 
 # ==================== 各区域 QoS 配置 ====================
@@ -25,8 +26,31 @@ ZONE_INTF_MAP = {
     "r1-eth2": "lib",
     "r1-eth3": "office",
     "r1-eth4": "finance",
-
 }
+
+# 服务器出口接口 — HTB 配在此处，控制各区域去往服务器的流量竞争
+SERVER_UPLINKS = [SERVER1_INTF, SERVER2_INTF]
+
+# 区域 → 子网映射（用于 tc filter 按源 IP 分类流量）
+ZONE_SUBNET_MAP = {
+    "dorm":    "10.0.1.0/24",
+    "teach":   "10.0.2.0/24",
+    "lib":     "10.0.3.0/24",
+    "office":  "10.0.4.0/24",
+    "finance": "10.0.5.0/24",
+}
+
+# 区域 → HTB class ID 映射（hh:minor 格式）
+ZONE_CLASS_MAP = {
+    "dorm":    "1:10",
+    "teach":   "1:20",
+    "lib":     "1:30",
+    "office":  "1:40",
+    "finance": "1:50",
+}
+
+# 服务器出口瓶颈带宽（Mbps，实验中的实际瓶颈）
+DEFAULT_BOTTLENECK = 20
 
 # HTB QoS 各区域带宽分配（Mbps）
 #   finance/office: 保底 70% 拓扑带宽 （其中财务需求较高，办公需求预留空间）
@@ -48,66 +72,91 @@ def _clear_interface_qos(r1, intf):
 
 def apply_baseline_policy(r1, bottleneck_bw=None):
     """
-    Baseline：各区域上行链路保持拓扑级带宽，仅附加 pfifo。
+    Baseline：服务器出口链路无 QoS 优先级，所有流量公平竞争。
 
-    QoS 消融实验中作为"去掉 QoS"的对照组：
-      各区域流量按其拓扑带宽自然竞争，无额外优先级或限速。
+    在 r1-eth5（→Server1）和 r1-eth6（→Server2）上配置简单的 pfifo 队列，
+    不使用 tc filter 按源 IP 分类——各区域流量在出口处平等竞争带宽。
+
+    QoS 消融实验中作为"去掉 QoS"的对照组。
     """
-    info(f"[QOS] 配置 Baseline (pfifo): 各区域上行链路拓扑带宽, 无优先级\n")
+    bw = bottleneck_bw or DEFAULT_BOTTLENECK
+    info(f"[QOS] 配置 Baseline (pfifo): 服务器出口 {bw}Mbps, 无分类, 公平竞争\n")
 
-    for intf in ZONE_UPLINKS:
-        zone = ZONE_INTF_MAP[intf]
-        bw = ZONE_BASELINE_BW[intf]
+    for intf in SERVER_UPLINKS:
         _clear_interface_qos(r1, intf)
         r1.cmd(f"tc qdisc add dev {intf} root handle 1: htb default 1")
         r1.cmd(f"tc class add dev {intf} parent 1: classid 1:1 "
                f"htb rate {bw}mbit ceil {bw}mbit")
         r1.cmd(f"tc qdisc add dev {intf} parent 1:1 handle 10: pfifo limit 1000")
-        info(f"  [QOS] {intf} ({zone}): {bw}Mbps pfifo\n")
+        info(f"  [BASELINE] {intf}: {bw}Mbps pfifo (无分类, 公平竞争)\n")
 
-    info(f"[QOS] Baseline 已生效: {len(ZONE_UPLINKS)} 条区域上行链路, pfifo\n")
+    info(f"[QOS] Baseline 已生效: {len(SERVER_UPLINKS)} 条服务器出口链路\n")
 
 
 def apply_htb_policy(r1, bottleneck_bw=None):
     """
-    QoS：各区域上行链路 HTB 分层调度。
+    HTB QoS：在服务器出口链路（r1-eth5, r1-eth6）上配置分层调度。
 
-    每条区域上行链路独立配置 HTB：
-      - 根类速率 = 拓扑带宽 × HTB_RATE_RATIO（欠分配，预留突发空间）
-      - ceil = 拓扑带宽
-      - 队列类型: sfq 公平队列（防同区域 TCP 流踩踏）
+    为每个区域创建独立的 HTB class，使用 tc filter 按源 IP 子网分类流量：
+      - finance（财务处）: 70% 瓶颈带宽保障（关键业务优先级最高）
+      - office/teach/lib:  70% 瓶颈带宽保障（同等优先级）
+      - dorm（宿舍区）:     60% 瓶颈带宽（视频流限速）
 
-    优先级通过各区域的 rate/ceil 比例隐式实现：
-      - finance: 70% 拓扑带宽保障（关键财务业务）
-      - office/teach/lib: 70% 拓扑带宽保障
-      - dorm: 60% 拓扑带宽（视频流受限）
+    当多个区域同时访问同一台服务器时，HTB 按 rate/ceil 分配出口带宽，
+    TCP 流将自动收敛到各自的 rate 上限，关键业务得以保障。
+
+    参数:
+        r1:             路由器节点
+        bottleneck_bw:  服务器出口瓶颈带宽 (Mbps)，默认 DEFAULT_BOTTLENECK (20 Mbps)
     """
-    info(f"[QOS] 配置 HTB QoS: 各区域上行链路独立调度\n")
+    bw = bottleneck_bw or DEFAULT_BOTTLENECK
+    info(f"[QOS] 配置 HTB QoS: 服务器出口 {bw}Mbps, 按源 IP 子网分类\n")
 
-    for intf in ZONE_UPLINKS:
-        zone = ZONE_INTF_MAP[intf]
-        topo_bw = ZONE_BASELINE_BW[intf]
-        ratio = HTB_RATE_RATIO.get(zone, 0.70)
-        rate = int(topo_bw * ratio)
-        ceil = topo_bw
-
+    for intf in SERVER_UPLINKS:
         _clear_interface_qos(r1, intf)
 
-        r1.cmd(f"tc qdisc add dev {intf} root handle 1: htb default 10")
+        # Step 1: 创建 HTB root qdisc
+        r1.cmd(f"tc qdisc add dev {intf} root handle 1: htb default 99")
+
+        # Step 2: 根类 — 总带宽 = 瓶颈带宽
         r1.cmd(f"tc class add dev {intf} parent 1: classid 1:1 "
-               f"htb rate {rate}mbit ceil {ceil}mbit")
-        r1.cmd(f"tc qdisc add dev {intf} parent 1:1 handle 10: sfq perturb 10")
+               f"htb rate {bw}mbit ceil {bw}mbit")
 
-        info(f"  [QOS] {intf} ({zone}): rate={rate}Mbps ceil={ceil}Mbps "
-             f"(拓扑={topo_bw}Mbps, ratio={ratio:.0%}) sfq\n")
+        # Step 3: 为每个区域创建子类 + sfq 队列 + tc filter
+        for zone, classid in ZONE_CLASS_MAP.items():
+            ratio = HTB_RATE_RATIO.get(zone, 0.50)
+            rate = max(int(bw * ratio), 1)   # 保底带宽，至少 1Mbps
+            ceil = bw
 
-    info(f"[QOS] HTB QoS 已生效: {len(ZONE_UPLINKS)} 条区域上行链路\n"
-         f"      finance/office/teach/lib → 70% 带宽保障 | dorm → 60% 限速\n")
+            # 创建子类
+            r1.cmd(f"tc class add dev {intf} parent 1:1 classid {classid} "
+                   f"htb rate {rate}mbit ceil {ceil}mbit")
+            # sfq 公平队列（防止同区域 TCP 流之间互相踩踏）
+            leaf_handle = classid.split(":")[1]
+            r1.cmd(f"tc qdisc add dev {intf} parent {classid} "
+                   f"handle {leaf_handle}: sfq perturb 10")
+            # tc filter: 按源 IP 子网将流量分类到对应 class
+            subnet = ZONE_SUBNET_MAP[zone]
+            r1.cmd(f"tc filter add dev {intf} protocol ip parent 1:0 prio 1 "
+                   f"u32 match ip src {subnet} flowid {classid}")
+
+            info(f"  [HTB] {intf} {zone}: class={classid} rate={rate}Mbps "
+                 f"ceil={ceil}Mbps (ratio={ratio:.0%}) src={subnet}\n")
+
+        # Step 4: 默认 catch-all 类（兜底未分类流量）
+        r1.cmd(f"tc class add dev {intf} parent 1:1 classid 1:99 "
+               f"htb rate 1mbit ceil {bw}mbit")
+        r1.cmd(f"tc qdisc add dev {intf} parent 1:99 handle 99: sfq perturb 10")
+
+        info(f"  [HTB] {intf}: 默认 class 1:99 已创建 (未分类流量)\n")
+
+    info(f"[QOS] HTB QoS 已生效: {len(SERVER_UPLINKS)} 条服务器出口链路, "
+         f"5 个区域 class + filter\n")
 
 
 def clear_qos(r1):
-    """清除所有 QoS 配置（仅区域上行链路，不涉及服务器链路）。"""
+    """清除所有 QoS 配置（区域上行链路 + 服务器出口链路）。"""
     info("[QOS] 清除所有 QoS 配置...\n")
-    for intf in ZONE_UPLINKS:
+    for intf in ZONE_UPLINKS + SERVER_UPLINKS:
         r1.cmd(f"tc qdisc del dev {intf} root 2>/dev/null || true")
     info("[QOS] QoS 配置已清除\n")

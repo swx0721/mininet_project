@@ -27,3 +27,10 @@ python main.py --experiment security_test
 
 python main.py --auto                          # 全部 B
 python main.py --auto --scenario A             # 全部 A
+
+
+sudo python3 main.py --experiment qos_ablation --scenario A
+sudo python3 main.py --experiment qos_ablation --scenario B
+sudo python3 main.py --experiment lb_ablation --scenario A
+sudo python3 main.py --experiment lb_ablation --scenario A
+
