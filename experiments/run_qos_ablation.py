@@ -68,17 +68,23 @@ POISSON_LAMBDA = {}
 
 # ==================== 场景定义 ====================
 
-# 场景 A：中等均衡负载 — 两服务器负载接近
-#   S1 λ 合计 = 0.4+0.3+0.2     = 0.9 (50%)
-#   S2 λ 合计 = 0.3+0.2+0.2(udp) = 0.7 (39%)
+# 场景 A：S1/S2 双侧中等负载 — HTB 不触发（作为场景 B 的对照基线）
+#   设计意图：S1 三区域和 S2 两区域都处于中等负载，链路不发生拥塞；
+#             HTB 优先级调度无竞争可供仲裁，预期消融前后（pfifo vs HTB）差异极小；
+#             这作为场景 B（S1 高负载）的对照，证明 HTB 仅在拥塞时才有效。
+#
+#   S1 λ 合计 = 0.2+0.15+0.1+0.15(probe) = 0.60  → ~33% 链路利用率（中等，无拥塞）
+#   S2 λ 合计 = 0.15+0.1                 = 0.25  → ~14% 链路利用率（低，无拥塞）
 QOS_SCENARIO_A = {
-    "finance1": 0.4, "teach1": 0.3, "office1": 0.2,
-    "dorm1": 0.3, "lib1": 0.2, "finance_probe": 0.2,
+    "finance1": 0.2, "teach1": 0.15, "office1": 0.1,
+    "dorm1": 0.15, "lib1": 0.1, "finance_probe": 0.15,
 }
 
-# 场景 B：Server1 高负载 — S1 明显高于 S2（默认）
-#   S1 λ 合计 = 0.5+0.4+0.4+0.25(udp) = 1.55 (86%)
-#   S2 λ 合计 = 0.4+0.3              = 0.70 (39%)
+# 场景 B：Server1 高负载 — S1 明显高于 S2（默认，不变）
+#   设计意图：S1 三区域 λ 较高，链路产生竞争拥塞；S2 中低负载；
+#             HTB 对关键业务（财务处）的优先级保障在拥塞时才能体现。
+#   S1 λ 合计 = 0.5+0.4+0.4+0.25(probe) = 1.55
+#   S2 λ 合计 = 0.4+0.3                 = 0.70
 QOS_SCENARIO_B = {
     "finance1": 0.5, "teach1": 0.4, "office1": 0.4,
     "dorm1": 0.4, "lib1": 0.3, "finance_probe": 0.25,
@@ -267,8 +273,8 @@ def run_competitive_measurement(net, hosts, duration):
 
     def build_iperf_cmd(target_ip, port, protocol, target_bw):
         if protocol == "udp":
-            bw = random.randint(6, 9)
-            return f"iperf3 -c {target_ip} -p {port} -t {FLOW_DURATION} -u -b {bw}M -J 2>/dev/null"
+            # 不限速：让 UDP 与 TCP 公平竞争，由 HTB/pfifo 决定实际分配
+            return f"iperf3 -c {target_ip} -p {port} -t {FLOW_DURATION} -u -b 0 -J 2>/dev/null"
         # TCP 不限速；stderr 重定向到 /dev/null，只保留 JSON stdout
         return f"iperf3 -c {target_ip} -p {port} -t {FLOW_DURATION} -J 2>/dev/null"
 
@@ -533,9 +539,9 @@ def run_qos_ablation(server_ip="10.0.100.2", duration=None, scenario="B"):
     s2_lambda = POISSON_LAMBDA.get("dorm1", 0) + POISSON_LAMBDA.get("lib1", 0)
     info(f"[QOS_ABLATION] ====== 场景 {scenario} ======\n")
     if scenario == "A":
-        info("[QOS_ABLATION] 负载模式: 中等均衡 — 两服务器负载接近\n")
+        info("[QOS_ABLATION] 负载模式: S1/S2 双侧中等负载 — HTB 不触发，消融前后差异应极小（对照基线）\n")
     else:
-        info("[QOS_ABLATION] 负载模式: Server1 高负载不均 — S1 明显高于 S2\n")
+        info("[QOS_ABLATION] 负载模式: Server1 高负载 — S1 产生拥塞，HTB 保障财务处关键业务\n")
     info(f"[QOS_ABLATION] λ 参数: finance1={POISSON_LAMBDA['finance1']}, "
          f"teach1={POISSON_LAMBDA['teach1']}, office1={POISSON_LAMBDA['office1']}, "
          f"dorm1={POISSON_LAMBDA['dorm1']}, lib1={POISSON_LAMBDA['lib1']}, "
@@ -595,25 +601,25 @@ def run_qos_ablation(server_ip="10.0.100.2", duration=None, scenario="B"):
                 protocol = spec[5]
                 break
 
-        info(f"[Baseline] {label:<20} {protocol:<6} "
+        info(f"[Final HTB消融] {label:<20} {protocol:<6} "
              f"{b_tp:<14.2f} {b_rtt:<12.2f} "
              f"{b_jit if b_jit is not None else 'N/A':<12} "
              f"{b_loss if b_loss is not None else 'N/A':<12}\n")
 
-        info(f"[HTB QoS]  {label:<20} {protocol:<6} "
+        info(f"[Final]        {label:<20} {protocol:<6} "
              f"{h_tp:<14.2f} {h_rtt:<12.2f} "
              f"{h_jit if h_jit is not None else 'N/A':<12} "
              f"{h_loss if h_loss is not None else 'N/A':<12}\n")
         info("-" * 90 + "\n")
 
         csv_rows.append([
-            f"[Baseline] {label}", protocol,
+            f"[Final HTB消融] {label}", protocol,
             b_tp, b_rtt,
             b_jit if b_jit is not None else "N/A",
             b_loss if b_loss is not None else "N/A",
         ])
         csv_rows.append([
-            f"[HTB QoS] {label}", protocol,
+            f"[Final] {label}", protocol,
             h_tp, h_rtt,
             h_jit if h_jit is not None else "N/A",
             h_loss if h_loss is not None else "N/A",

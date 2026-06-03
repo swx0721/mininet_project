@@ -92,15 +92,20 @@ LOAD_LAMBDA = {}
 
 # ==================== 场景定义 ====================
 
-# 场景 A：中等均衡负载 — 两服务器负载接近
-#   S1 λ 合计 = 0.10+0.10+0.05 = 0.25 → 50%利用率
-#   S2 λ 合计 = 0.10+0.15       = 0.25 → 50%利用率
+# 场景 A：S1/S2 双侧中等负载 — RR 效果不明显（作为场景 B 的对照基线）
+#   设计意图：S1 三区域和 S2 两区域都处于中等负载，Static 绑定下两侧均未过载；
+#             RR 均摊与 Static 静态分配的性能差异很小，说明 RR 在均衡负载时优势不突出；
+#             这作为场景 B（S1 高负载）的对照，证明 RR 的价值在负载不均时才显著。
+#
+#   S1 λ 合计 = 0.12+0.08+0.06 = 0.26 → 利用率≈52%（单文件2s，26请求/min，约52s）
+#   S2 λ 合计 = 0.10+0.06       = 0.16 → 利用率≈32%（中等，有余量）
+#   两侧都不超载，Static/RR 效果差异预期较小
 LB_SCENARIO_A = {
-    "finance1": 0.10, "teach1": 0.10, "office1": 0.05,
-    "dorm1": 0.10, "lib1": 0.15,
+    "finance1": 0.12, "teach1": 0.08, "office1": 0.06,
+    "dorm1": 0.10, "lib1": 0.06,
 }
 
-# 场景 B：Server1 高负载 — S1 明显高于 S2（默认）
+# 场景 B：Server1 高负载 — S1 明显高于 S2（默认，不变）
 #   S1 λ 合计 = 0.18+0.12+0.10 = 0.40 → 80%利用率（中高负载，非过载）
 #   S2 λ 合计 = 0.12+0.08       = 0.20 → 40%利用率（中低负载，有余量）
 LB_SCENARIO_B = {
@@ -366,8 +371,10 @@ def run_single_lb_experiment(algorithm, algo_label, duration=60):
 
     info(f"[LB_ABLATION] 开始 {algo_label} 实验...\n")
     if algorithm == "static":
-        info(f"[LB_ABLATION]   静态映射: Server1 ← finance1/teach1/office1 (λ=0.40), "
-             f"Server2 ← dorm1/lib1 (λ=0.20)\n")
+        s1_lam = LOAD_LAMBDA.get("finance1", 0) + LOAD_LAMBDA.get("teach1", 0) + LOAD_LAMBDA.get("office1", 0)
+        s2_lam = LOAD_LAMBDA.get("dorm1", 0) + LOAD_LAMBDA.get("lib1", 0)
+        info(f"[LB_ABLATION]   静态映射: Server1 ← finance1/teach1/office1 (λ={s1_lam:.2f}), "
+             f"Server2 ← dorm1/lib1 (λ={s2_lam:.2f})\n")
     results, elapsed = generate_traffic(net, hosts, balancer, duration=duration, max_wait=300)
     stats = compute_statistics(results, elapsed, algo_label)
 
@@ -409,9 +416,9 @@ def run_lb_ablation(duration=60, scenario="B"):
     ensure_dirs()
     info(f"[LB_ABLATION] ====== 场景 {scenario} ======\n")
     if scenario == "A":
-        info("[LB_ABLATION] 负载模式: 中等均衡 — 两服务器负载接近\n")
+        info("[LB_ABLATION] 负载模式: S1/S2 双侧中等负载 — Static/RR 差异预期较小（对照基线）\n")
     else:
-        info("[LB_ABLATION] 负载模式: Server1 高负载不均 — S1 明显高于 S2\n")
+        info("[LB_ABLATION] 负载模式: Server1 高负载不均 — S1 明显高于 S2，RR 均衡效果显著\n")
     info(f"[LB_ABLATION] λ 参数: finance1={LOAD_LAMBDA['finance1']}, "
          f"teach1={LOAD_LAMBDA['teach1']}, office1={LOAD_LAMBDA['office1']}, "
          f"dorm1={LOAD_LAMBDA['dorm1']}, lib1={LOAD_LAMBDA['lib1']}\n")
