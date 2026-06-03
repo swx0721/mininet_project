@@ -44,20 +44,18 @@ def start_dual_iperf(server1, server2):
     time.sleep(1.5)
 
     # === 启动两个服务器（skip_kill=True 避免互相误杀）===
-    # 对称端口：两服务器均开放 5201-5204，确保 QoS 消融实验中
-    # office1(TCP:5203)、finance_probe(UDP:5204) 被 RR 分到 Server2 时也能正常工作
-    start_iperf_server(server1, ports=[5201, 5202, 5203, 5204], skip_kill=True)
-    start_iperf_server(server2, ports=[5201, 5202, 5203, 5204], skip_kill=True)
+    # 对称端口：两服务器均开放 5201-5206，确保所有客户端独占端口
+    # 避免 teach1(TCP:5202) 和 lib1(TCP:5205) 等共用端口导致解析失败
+    start_iperf_server(server1, ports=[5201, 5202, 5203, 5204, 5205, 5206], skip_kill=True)
+    start_iperf_server(server2, ports=[5201, 5202, 5203, 5204, 5205, 5206], skip_kill=True)
 
     # === 等待端口完全打开 ===
     time.sleep(2)
 
     # === 验证端口是否打开 ===
-    for server, name, ports in [
-        (server1, "Server1", [5201, 5202, 5203, 5204]),
-        (server2, "Server2", [5201, 5202, 5203, 5204])
-    ]:
-        for port in ports:
+    all_ports = [5201, 5202, 5203, 5204, 5205, 5206]
+    for server, name in [(server1, "Server1"), (server2, "Server2")]:
+        for port in all_ports:
             result = server.cmd(
                 f"ss -tuln 2>/dev/null | grep ':{port} ' || "
                 f"echo 'port_not_found'"

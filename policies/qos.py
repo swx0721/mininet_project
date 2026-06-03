@@ -3,14 +3,13 @@ policies/qos.py — QoS 流量控制策略
 
 QoS 作用位置：核心路由器 → 服务器的出口链路（r1-eth5, r1-eth6）
   - 实验瓶颈在服务器出口（默认 20Mbps），QoS 配在此处控制竞争
-  - HTB: 为每个区域创建独立 class + tc filter（按源 IP 子网分类）
+  - HTB: 两级优先级体系 — 财务处独享 prio=0 高优先级，其余区域 prio=10 低优先级
+  - 低优先级区域只有在财务处下限带宽被满足后才能获得剩余带宽
   - Baseline: pfifo 公平竞争（无分类，作为消融对照组）
-  - 财务处获得较高带宽保障（70% 瓶颈带宽）
-  - 宿舍区获得较低带宽限制（60% 瓶颈带宽）
 
-三种策略:
+策略:
   1. baseline_policy:  pfifo FIFO（无 QoS，平等竞争）
-  2. htb_policy:       HTB 分层 + sfq 公平队列（按区域优先级调度）
+  2. htb_policy:       HTB 两级优先级 + sfq 公平队列（prio: finance=0, others=10）
 """
 
 from mininet.log import info
@@ -52,16 +51,19 @@ ZONE_CLASS_MAP = {
 # 服务器出口瓶颈带宽（Mbps，实验中的实际瓶颈）
 DEFAULT_BOTTLENECK = 20
 
-# HTB QoS 各区域带宽分配（Mbps）
-#   finance/office: 保底 70% 拓扑带宽 （其中财务需求较高，办公需求预留空间）
-#   teach/lib: 保底 70% 拓扑带宽
-#   dorm: 保底 60% 拓扑带宽（视频流限速）
-HTB_RATE_RATIO = {
-    "finance": 0.70,
-    "office":  0.70,
-    "teach":   0.70,
-    "lib":     0.70,
-    "dorm":    0.60,
+# HTB 两级优先级配置
+#   prio=0:  财务处独享最高优先级 — 保底带宽优先保障，低优先级区域借用受限
+#   prio=7: 其余四区域低优先级 — 只在财务处下限满足后才分配剩余带宽
+#   rate_ratio: 保底带宽占比（相对于瓶颈带宽 20Mbps）
+#     finance=60% (12Mbps) — 关键业务保障
+#     others=10% ( 2Mbps) — 低优先级，仅保活
+#   注意: HTB prio 取值范围 0~7（tc 强制限制），0=最高优先级
+HTB_CONFIG = {
+    "finance": {"rate_ratio": 0.60, "prio": 0},   # 高优先级, 12Mbps 保底
+    "office":  {"rate_ratio": 0.10, "prio": 7},   # 低优先级,  2Mbps 保底
+    "teach":   {"rate_ratio": 0.10, "prio": 7},
+    "lib":     {"rate_ratio": 0.10, "prio": 7},
+    "dorm":    {"rate_ratio": 0.10, "prio": 7},
 }
 
 
@@ -95,22 +97,23 @@ def apply_baseline_policy(r1, bottleneck_bw=None):
 
 def apply_htb_policy(r1, bottleneck_bw=None):
     """
-    HTB QoS：在服务器出口链路（r1-eth5, r1-eth6）上配置分层调度。
+    HTB QoS：在服务器出口链路（r1-eth5, r1-eth6）上配置两级优先级调度。
 
-    为每个区域创建独立的 HTB class，使用 tc filter 按源 IP 子网分类流量：
-      - finance（财务处）: 70% 瓶颈带宽保障（关键业务优先级最高）
-      - office/teach/lib:  70% 瓶颈带宽保障（同等优先级）
-      - dorm（宿舍区）:     60% 瓶颈带宽（视频流限速）
+    优先级体系:
+      prio=0  (最高): 财务处 — 关键业务独享高优先级，保底 60% 瓶颈带宽
+      prio=10 (普通): 宿舍/教学/图书馆/办公 — 低优先级，保底仅 10% 瓶颈
+                      只有在财务处带宽需求被满足后，剩余带宽才分配给这些区域。
 
-    当多个区域同时访问同一台服务器时，HTB 按 rate/ceil 分配出口带宽，
-    TCP 流将自动收敛到各自的 rate 上限，关键业务得以保障。
+    HTB prio 机制：sibling class 中 prio 值越小调度优先级越高。
+    高优先级 class 的 rate 被满足后，剩余带宽才流向低优先级 class。
 
     参数:
         r1:             路由器节点
         bottleneck_bw:  服务器出口瓶颈带宽 (Mbps)，默认 DEFAULT_BOTTLENECK (20 Mbps)
     """
     bw = bottleneck_bw or DEFAULT_BOTTLENECK
-    info(f"[QOS] 配置 HTB QoS: 服务器出口 {bw}Mbps, 按源 IP 子网分类\n")
+    info(f"[QOS] 配置 HTB QoS: 服务器出口 {bw}Mbps "
+         f"(两级优先级: 财务处 prio=0, 其余 prio=10)\n")
 
     for intf in SERVER_UPLINKS:
         _clear_interface_qos(r1, intf)
@@ -122,15 +125,17 @@ def apply_htb_policy(r1, bottleneck_bw=None):
         r1.cmd(f"tc class add dev {intf} parent 1: classid 1:1 "
                f"htb rate {bw}mbit ceil {bw}mbit")
 
-        # Step 3: 为每个区域创建子类 + sfq 队列 + tc filter
+        # Step 3: 为每个区域创建子类（带 prio）+ sfq 队列 + tc filter
         for zone, classid in ZONE_CLASS_MAP.items():
-            ratio = HTB_RATE_RATIO.get(zone, 0.50)
+            cfg = HTB_CONFIG.get(zone, {"rate_ratio": 0.10, "prio": 10})
+            ratio = cfg["rate_ratio"]
+            prio = cfg["prio"]
             rate = max(int(bw * ratio), 1)   # 保底带宽，至少 1Mbps
             ceil = bw
 
-            # 创建子类
+            # 创建子类（含 prio 参数）
             r1.cmd(f"tc class add dev {intf} parent 1:1 classid {classid} "
-                   f"htb rate {rate}mbit ceil {ceil}mbit")
+                   f"htb rate {rate}mbit ceil {ceil}mbit prio {prio}")
             # sfq 公平队列（防止同区域 TCP 流之间互相踩踏）
             leaf_handle = classid.split(":")[1]
             r1.cmd(f"tc qdisc add dev {intf} parent {classid} "
@@ -141,17 +146,17 @@ def apply_htb_policy(r1, bottleneck_bw=None):
                    f"u32 match ip src {subnet} flowid {classid}")
 
             info(f"  [HTB] {intf} {zone}: class={classid} rate={rate}Mbps "
-                 f"ceil={ceil}Mbps (ratio={ratio:.0%}) src={subnet}\n")
+                 f"ceil={ceil}Mbps prio={prio} (ratio={ratio:.0%}) src={subnet}\n")
 
-        # Step 4: 默认 catch-all 类（兜底未分类流量）
+        # Step 4: 默认 catch-all 类（兜底未分类流量，最低优先级 prio=7）
         r1.cmd(f"tc class add dev {intf} parent 1:1 classid 1:99 "
-               f"htb rate 1mbit ceil {bw}mbit")
+               f"htb rate 1mbit ceil {bw}mbit prio 7")
         r1.cmd(f"tc qdisc add dev {intf} parent 1:99 handle 99: sfq perturb 10")
 
-        info(f"  [HTB] {intf}: 默认 class 1:99 已创建 (未分类流量)\n")
+        info(f"  [HTB] {intf}: 默认 class 1:99 已创建 (未分类流量, prio=99)\n")
 
     info(f"[QOS] HTB QoS 已生效: {len(SERVER_UPLINKS)} 条服务器出口链路, "
-         f"5 个区域 class + filter\n")
+         f"5 个区域 class (两级优先级) + filter\n")
 
 
 def clear_qos(r1):

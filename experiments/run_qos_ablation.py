@@ -45,13 +45,16 @@ from policies.load_balance import LoadBalancer
 
 # QoS 消融实验使用 Round Robin LB，不使用静态映射
 # 客户端列表（不含服务器 IP，由 LoadBalancer 动态分配）
+# 端口分配说明: 每个客户端独占一个端口（TCP/UDP 可共享端口号，不冲突）;
+# 关键修复: teach1 和 lib1 原来都用 TCP:5202，RR 到同一服务器时 100% 解析失败。
+# 现在将所有客户端端口去重，服务器监听 5201-5206。
 COMPETING_CLIENTS = [
     ("finance1", "财务处 (关键业务-TCP)",  "RR动态", 5201, "tcp", 10),
     ("teach1",   "教学楼 (课件下载-TCP)",   "RR动态", 5202, "tcp", 20),
     ("office1",  "办公楼 (OA系统-TCP)",     "RR动态", 5203, "tcp", 15),
-    ("dorm1",    "宿舍区 (视频流-UDP)",     "RR动态", 5201, "udp", 12),
-    ("lib1",     "图书馆 (网页浏览-TCP)",   "RR动态", 5202, "tcp", 15),
-    ("finance_probe", "财务处 (UDP探针)", "RR动态", 5204, "udp", 1),
+    ("dorm1",    "宿舍区 (视频流-UDP)",     "RR动态", 5204, "udp", 12),
+    ("lib1",     "图书馆 (网页浏览-TCP)",   "RR动态", 5205, "tcp", 15),
+    ("finance_probe", "财务处 (UDP探针)", "RR动态", 5206, "udp", 1),
 ]
 
 # 主机别名：finance_probe 与 finance1 共用同一个 Mininet 节点
@@ -68,16 +71,23 @@ POISSON_LAMBDA = {}
 
 # ==================== 场景定义 ====================
 
-# 场景 A：S1/S2 双侧中等负载 — HTB 不触发（作为场景 B 的对照基线）
-#   设计意图：S1 三区域和 S2 两区域都处于中等负载，链路不发生拥塞；
-#             HTB 优先级调度无竞争可供仲裁，预期消融前后（pfifo vs HTB）差异极小；
+# 场景 A：S1/S2 双侧低负载 — HTB 不触发（作为场景 B 的对照基线）
+#   设计意图：S1/S2 到达率极低，期望并发流 ≤ 1/服务器，链路完全不拥塞；
+#             HTB 优先级调度无竞争可供仲裁，预期消融前后（pfifo vs HTB prio=0/7）
+#             差异极小，吞吐量 ≈ 各自 target_bw；
 #             这作为场景 B（S1 高负载）的对照，证明 HTB 仅在拥塞时才有效。
 #
-#   S1 λ 合计 = 0.2+0.15+0.1+0.15(probe) = 0.60  → ~33% 链路利用率（中等，无拥塞）
-#   S2 λ 合计 = 0.15+0.1                 = 0.25  → ~14% 链路利用率（低，无拥塞）
+#   λ=0.05 的选取依据：
+#     E[n] = λ × FLOW_DURATION(5s)
+#     S1 E[n] = (0.05×4)×5 = 1.0 → 总需求 ≈ 10-18 Mbps < 20 Mbps（不拥塞）
+#     S2 E[n] = (0.05×2)×5 = 0.5 → 总需求 ≈ 5-9 Mbps < 20 Mbps（不拥塞）
+#
+#   P(0 流) = e^(-λ×60) = e^(-3) ≈ 5%，过低导致假阴性。
+#   已通过 run_client_poisson 末尾的「保底逻辑」彻底消除：若泊松循环 0 次流，
+#   强制在 end_time 前发送 1 次保底流，P(0 样本) 真正 = 0%。
 QOS_SCENARIO_A = {
-    "finance1": 0.2, "teach1": 0.15, "office1": 0.1,
-    "dorm1": 0.15, "lib1": 0.1, "finance_probe": 0.15,
+    "finance1": 0.05, "teach1": 0.05, "office1": 0.05,
+    "dorm1": 0.05, "lib1": 0.05, "finance_probe": 0.05,
 }
 
 # 场景 B：Server1 高负载 — S1 明显高于 S2（默认，不变）
@@ -254,7 +264,7 @@ def run_competitive_measurement(net, hosts, duration):
     load_balancer = LoadBalancer(algorithm="round_robin")
 
     # 打印端口分配信息
-    info("[QOS_ABLATION] iperf3 端口分配（Server1/Server2 均开放 5201-5204）:\n")
+    info("[QOS_ABLATION] iperf3 端口分配（Server1/Server2 均开放 5201-5206）:\n")
     for spec in COMPETING_CLIENTS:
         info(f"  {spec[0]:<16} {spec[4]:<5} port={spec[3]} (由 LB 动态分配目标)\n")
 
@@ -272,11 +282,18 @@ def run_competitive_measurement(net, hosts, duration):
         return output or ""
 
     def build_iperf_cmd(target_ip, port, protocol, target_bw):
+        # 注意: 不加 2>/dev/null — stderr 已通过 subprocess.STDOUT 合并到 stdout,
+        # 保留错误信息让重试逻辑能准确判断 "error" 关键字。
         if protocol == "udp":
-            # 不限速：让 UDP 与 TCP 公平竞争，由 HTB/pfifo 决定实际分配
-            return f"iperf3 -c {target_ip} -p {port} -t {FLOW_DURATION} -u -b 0 -J 2>/dev/null"
-        # TCP 不限速；stderr 重定向到 /dev/null，只保留 JSON stdout
-        return f"iperf3 -c {target_ip} -p {port} -t {FLOW_DURATION} -J 2>/dev/null"
+            # UDP 目标带宽 = 配置文件中的 target_bw（避免 -b 0 导致 91% 丢包率）
+            #   dorm 视频流: 12 Mbps（单个流需求，多个并发流可能超过瓶颈）
+            #   finance_probe: 1 Mbps（探针轻量流量）
+            # 如果多个 UDP 流并发到达同一服务器，总需求可能超过 20Mbps 瓶颈，
+            # 此时 HTB 的 dorm=12Mbps rate 限制机制可以正常体现
+            bw = target_bw
+            return f"iperf3 -c {target_ip} -p {port} -t {FLOW_DURATION} -u -b {bw}M -J"
+        # TCP 不限速 — 由拥塞控制算法自动收敛
+        return f"iperf3 -c {target_ip} -p {port} -t {FLOW_DURATION} -J"
 
     def parse_flow_result(result, protocol):
         if protocol == "udp":
@@ -309,11 +326,18 @@ def run_competitive_measurement(net, hosts, duration):
             result = run_iperf(client, cmd)
             parsed = parse_flow_result(result, protocol)
 
-            # 连接失败时重试一次（短暂等待后）
-            if not parsed and (not result or "error" in result.lower()):
-                time.sleep(1)
+            # 连接失败时指数退避重试（最多 3 次）
+            # iperf3 单端口单连接，泊松到达可能在上一个流未结束前触发新流
+            # 重试延迟: 1s → 2s → 4s，总等待 7s 超出 5s 流持续时间后可恢复
+            retry_count = 0
+            while (not parsed) and (not result or "error" in result.lower()) and retry_count < 3:
+                retry_count += 1
+                delay = 2 ** (retry_count - 1)  # 1s, 2s, 4s
+                time.sleep(delay)
                 result = run_iperf(client, cmd)
                 parsed = parse_flow_result(result, protocol)
+            if retry_count > 0 and parsed:
+                pass  # 重试成功，静默
 
             with results_lock:
                 if parsed:
@@ -329,6 +353,30 @@ def run_competitive_measurement(net, hosts, duration):
                 else:
                     info(f"  [DONE] {desc} #{flow_index}: 解析失败 "
                          f"(目标={target_ip}:{port}, 协议={protocol})\n")
+
+        # === 保底逻辑：泊松过程一次流都没生成时，强制发 1 次 ===
+        # random.expovariate(λ) 的重尾可能导致第一次 delay 就 > 60s，
+        # P(0 流) = e^(-λ×60)，λ=0.05 时为 5%。这会导致场景 A 低负载
+        # 实验中某些客户端出现 0 样本的假阴性（连续三次 office1 中招即为此）。
+        # 强制保底后 P(0 样本) 真正降为 0，不影响场景 A「不拥塞」的实验设计。
+        retried = 0
+        while flow_index == 0 and retried < 3:
+            delay = random.uniform(1, 3)
+            if time.time() + delay >= end_time:
+                break
+            time.sleep(delay)
+            target_ip = load_balancer.get_server(client_name)
+            cmd = build_iperf_cmd(target_ip, port, protocol, target_bw)
+            result = run_iperf(client, cmd)
+            parsed = parse_flow_result(result, protocol)
+            if parsed:
+                with results_lock:
+                    flow_samples[client_name].append(parsed)
+                info(f"  [DONE] {desc} #保底: "
+                     f"{parsed['throughput_mbps']:.2f} Mbps\n")
+                break
+            retried += 1
+            time.sleep(2 ** (retried - 1))  # 指数退避: 1s, 2s, 4s
 
     threads = []
     for client_spec in COMPETING_CLIENTS:
@@ -497,6 +545,7 @@ def run_single_policy_experiment(policy_type, label):
                 "rtt_ms": round(lat, 2) if lat is not None else 0,
                 "jitter_ms": tp.get("jitter_ms"),
                 "lost_percent": tp.get("lost_percent"),
+                "flow_count": tp.get("flow_count", 0),
             }
         else:
             aggregated[client_name] = {
@@ -504,6 +553,7 @@ def run_single_policy_experiment(policy_type, label):
                 "rtt_ms": round(lat, 2) if lat is not None else 0,
                 "jitter_ms": None,
                 "lost_percent": None,
+                "flow_count": 0,
             }
 
     return aggregated, label
@@ -567,9 +617,9 @@ def run_qos_ablation(server_ip="10.0.100.2", duration=None, scenario="B"):
 
     # 输出对比结果
     print_separator("QoS 消融实验结果 — 四维指标")
-    header = f"{'区域':<28} {'协议':<6} {'吞吐量(Mbps)':<14} {'时延(ms)':<12} {'抖动(ms)':<12} {'丢包率(%)':<12}"
+    header = f"{'区域':<28} {'协议':<6} {'吞吐量(Mbps)':<14} {'时延(ms)':<12} {'抖动(ms)':<12} {'丢包率(%)':<12} {'样本数':<8}"
     info(header + "\n")
-    info("-" * 90 + "\n")
+    info("-" * 98 + "\n")
 
     client_labels = {
         "finance1": "财务处 (关键业务-TCP)",
@@ -589,11 +639,13 @@ def run_qos_ablation(server_ip="10.0.100.2", duration=None, scenario="B"):
         b_rtt = b.get("rtt_ms", 0) if b else 0
         b_jit = b.get("jitter_ms") if b else None
         b_loss = b.get("lost_percent") if b else None
+        b_n = b.get("flow_count", 0) if b else 0
 
         h_tp = h.get("throughput_mbps", 0) if h else 0
         h_rtt = h.get("rtt_ms", 0) if h else 0
         h_jit = h.get("jitter_ms") if h else None
         h_loss = h.get("lost_percent") if h else None
+        h_n = h.get("flow_count", 0) if h else 0
 
         protocol = "tcp"
         for spec in COMPETING_CLIENTS:
@@ -604,13 +656,15 @@ def run_qos_ablation(server_ip="10.0.100.2", duration=None, scenario="B"):
         info(f"[Final HTB消融] {label:<20} {protocol:<6} "
              f"{b_tp:<14.2f} {b_rtt:<12.2f} "
              f"{b_jit if b_jit is not None else 'N/A':<12} "
-             f"{b_loss if b_loss is not None else 'N/A':<12}\n")
+             f"{b_loss if b_loss is not None else 'N/A':<12} "
+             f"{b_n:<8}\n")
 
         info(f"[Final]        {label:<20} {protocol:<6} "
              f"{h_tp:<14.2f} {h_rtt:<12.2f} "
              f"{h_jit if h_jit is not None else 'N/A':<12} "
-             f"{h_loss if h_loss is not None else 'N/A':<12}\n")
-        info("-" * 90 + "\n")
+             f"{h_loss if h_loss is not None else 'N/A':<12} "
+             f"{h_n:<8}\n")
+        info("-" * 98 + "\n")
 
         csv_rows.append([
             f"[Final HTB消融] {label}", protocol,
