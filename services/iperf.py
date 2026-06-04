@@ -44,16 +44,17 @@ def start_dual_iperf(server1, server2):
     time.sleep(1.5)
 
     # === 启动两个服务器（skip_kill=True 避免互相误杀）===
-    # 对称端口：两服务器均开放 5201-5206，确保所有客户端独占端口
+    # 对称端口：两服务器均开放 5201-5207，确保所有客户端独占端口
     # 避免 teach1(TCP:5202) 和 lib1(TCP:5205) 等共用端口导致解析失败
-    start_iperf_server(server1, ports=[5201, 5202, 5203, 5204, 5205, 5206], skip_kill=True)
-    start_iperf_server(server2, ports=[5201, 5202, 5203, 5204, 5205, 5206], skip_kill=True)
+    # 5207 为 hr1（人事处）保留
+    start_iperf_server(server1, ports=[5201, 5202, 5203, 5204, 5205, 5206, 5207], skip_kill=True)
+    start_iperf_server(server2, ports=[5201, 5202, 5203, 5204, 5205, 5206, 5207], skip_kill=True)
 
     # === 等待端口完全打开 ===
     time.sleep(2)
 
     # === 验证端口是否打开 ===
-    all_ports = [5201, 5202, 5203, 5204, 5205, 5206]
+    all_ports = [5201, 5202, 5203, 5204, 5205, 5206, 5207]
     for server, name in [(server1, "Server1"), (server2, "Server2")]:
         for port in all_ports:
             result = server.cmd(

@@ -25,6 +25,7 @@ ZONE_INTF_MAP = {
     "r1-eth2": "lib",
     "r1-eth3": "office",
     "r1-eth4": "finance",
+    "r1-eth7": "hr",
 }
 
 # 服务器出口接口 — HTB 配在此处，控制各区域去往服务器的流量竞争
@@ -32,11 +33,12 @@ SERVER_UPLINKS = [SERVER1_INTF, SERVER2_INTF]
 
 # 区域 → 子网映射（用于 tc filter 按源 IP 分类流量）
 ZONE_SUBNET_MAP = {
-    "dorm":    "10.0.1.0/24",
-    "teach":   "10.0.2.0/24",
-    "lib":     "10.0.3.0/24",
-    "office":  "10.0.4.0/24",
-    "finance": "10.0.5.0/24",
+    "dorm":    "10.0.0.0/20",
+    "teach":   "10.0.16.0/20",
+    "lib":     "10.0.32.0/23",
+    "office":  "10.0.34.0/24",
+    "finance": "10.0.35.0/26",
+    "hr":      "10.0.35.64/26",
 }
 
 # 区域 → HTB class ID 映射（hh:minor 格式）
@@ -46,6 +48,7 @@ ZONE_CLASS_MAP = {
     "lib":     "1:30",
     "office":  "1:40",
     "finance": "1:50",
+    "hr":      "1:60",
 }
 
 # 服务器出口瓶颈带宽（Mbps，实验中的实际瓶颈）
@@ -64,6 +67,7 @@ HTB_CONFIG = {
     "teach":   {"rate_ratio": 0.10, "prio": 7},
     "lib":     {"rate_ratio": 0.10, "prio": 7},
     "dorm":    {"rate_ratio": 0.10, "prio": 7},
+    "hr":      {"rate_ratio": 0.10, "prio": 7},   # 人事处：普通优先级（非高优先级）
 }
 
 

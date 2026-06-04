@@ -161,7 +161,7 @@ def _run_acl_ablation(hosts, with_security):
     if not dorm or not office:
         return {"dorm_mbps": -1, "office_mbps": -1, "dorm_success": -1, "office_success": -1}
 
-    finance_ip = "10.0.5.2"
+    finance_ip = "10.0.35.2"
     port = 5207
 
     def _udp_throughput(client, target, desc):

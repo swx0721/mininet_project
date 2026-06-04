@@ -52,6 +52,7 @@ COMPETING_CLIENTS = [
     ("finance1", "财务处 (关键业务-TCP)",  "RR动态", 5201, "tcp", 10),
     ("teach1",   "教学楼 (课件下载-TCP)",   "RR动态", 5202, "tcp", 20),
     ("office1",  "办公楼 (OA系统-TCP)",     "RR动态", 5203, "tcp", 15),
+    ("hr1",      "人事处 (HR系统-TCP)",     "RR动态", 5207, "tcp", 10),
     ("dorm1",    "宿舍区 (视频流-UDP)",     "RR动态", 5204, "udp", 12),
     ("lib1",     "图书馆 (网页浏览-TCP)",   "RR动态", 5205, "tcp", 15),
     ("finance_probe", "财务处 (UDP探针)", "RR动态", 5206, "udp", 1),
@@ -63,8 +64,8 @@ CLIENT_HOSTS = {
 }
 
 CLIENT_IPS = {
-    "dorm1": "10.0.1.2", "teach1": "10.0.2.2", "lib1": "10.0.3.2",
-    "office1": "10.0.4.2", "finance1": "10.0.5.2",
+    "dorm1": "10.0.0.2", "teach1": "10.0.16.2", "lib1": "10.0.32.2",
+    "office1": "10.0.34.2", "finance1": "10.0.35.2", "hr1": "10.0.35.66",
 }
 
 POISSON_LAMBDA = {}
@@ -79,24 +80,24 @@ POISSON_LAMBDA = {}
 #
 #   λ=0.05 的选取依据：
 #     E[n] = λ × FLOW_DURATION(5s)
-#     S1 E[n] = (0.05×4)×5 = 1.0 → 总需求 ≈ 10-18 Mbps < 20 Mbps（不拥塞）
+#     S1 E[n] = (0.05×5)×5 = 1.25 → 总需求 ≈ 12-22 Mbps < 20 Mbps（不拥塞）
 #     S2 E[n] = (0.05×2)×5 = 0.5 → 总需求 ≈ 5-9 Mbps < 20 Mbps（不拥塞）
 #
 #   P(0 流) = e^(-λ×60) = e^(-3) ≈ 5%，过低导致假阴性。
 #   已通过 run_client_poisson 末尾的「保底逻辑」彻底消除：若泊松循环 0 次流，
 #   强制在 end_time 前发送 1 次保底流，P(0 样本) 真正 = 0%。
 QOS_SCENARIO_A = {
-    "finance1": 0.05, "teach1": 0.05, "office1": 0.05,
+    "finance1": 0.05, "teach1": 0.05, "office1": 0.05, "hr1": 0.05,
     "dorm1": 0.05, "lib1": 0.05, "finance_probe": 0.05,
 }
 
 # 场景 B：Server1 高负载 — S1 明显高于 S2（默认，不变）
 #   设计意图：S1 三区域 λ 较高，链路产生竞争拥塞；S2 中低负载；
 #             HTB 对关键业务（财务处）的优先级保障在拥塞时才能体现。
-#   S1 λ 合计 = 0.5+0.4+0.4+0.25(probe) = 1.55
-#   S2 λ 合计 = 0.4+0.3                 = 0.70
+#   S1 λ 合计 = 0.5+0.4+0.4+0.3+0.25(probe) = 1.85
+#   S2 λ 合计 = 0.4+0.3                   = 0.70
 QOS_SCENARIO_B = {
-    "finance1": 0.5, "teach1": 0.4, "office1": 0.4,
+    "finance1": 0.5, "teach1": 0.4, "office1": 0.4, "hr1": 0.3,
     "dorm1": 0.4, "lib1": 0.3, "finance_probe": 0.25,
 }
 
@@ -561,7 +562,7 @@ def run_single_policy_experiment(policy_type, label):
 
 # ==================== 主入口 ====================
 
-def run_qos_ablation(server_ip="10.0.100.2", duration=None, scenario="B"):
+def run_qos_ablation(server_ip="10.0.60.2", duration=None, scenario="B"):
     """
     运行 QoS 消融实验。
 
@@ -585,7 +586,8 @@ def run_qos_ablation(server_ip="10.0.100.2", duration=None, scenario="B"):
 
     # 打印场景信息
     s1_lambda = POISSON_LAMBDA.get("finance1", 0) + POISSON_LAMBDA.get("teach1", 0) + \
-                POISSON_LAMBDA.get("office1", 0) + POISSON_LAMBDA.get("finance_probe", 0)
+                POISSON_LAMBDA.get("office1", 0) + POISSON_LAMBDA.get("hr1", 0) + \
+                POISSON_LAMBDA.get("finance_probe", 0)
     s2_lambda = POISSON_LAMBDA.get("dorm1", 0) + POISSON_LAMBDA.get("lib1", 0)
     info(f"[QOS_ABLATION] ====== 场景 {scenario} ======\n")
     if scenario == "A":
@@ -594,6 +596,7 @@ def run_qos_ablation(server_ip="10.0.100.2", duration=None, scenario="B"):
         info("[QOS_ABLATION] 负载模式: Server1 高负载 — S1 产生拥塞，HTB 保障财务处关键业务\n")
     info(f"[QOS_ABLATION] λ 参数: finance1={POISSON_LAMBDA['finance1']}, "
          f"teach1={POISSON_LAMBDA['teach1']}, office1={POISSON_LAMBDA['office1']}, "
+         f"hr1={POISSON_LAMBDA['hr1']}, "
          f"dorm1={POISSON_LAMBDA['dorm1']}, lib1={POISSON_LAMBDA['lib1']}, "
          f"probe={POISSON_LAMBDA['finance_probe']}\n")
     info(f"[QOS_ABLATION] S1 λ 合计={s1_lambda:.2f}, S2 λ 合计={s2_lambda:.2f}, "
@@ -625,6 +628,7 @@ def run_qos_ablation(server_ip="10.0.100.2", duration=None, scenario="B"):
         "finance1": "财务处 (关键业务-TCP)",
         "teach1": "教学楼 (课件下载-TCP)",
         "office1": "办公楼 (OA系统-TCP)",
+        "hr1": "人事处 (HR系统-TCP)",
         "dorm1": "宿舍区 (视频流-UDP)",
         "lib1": "图书馆 (网页浏览-TCP)",
         "finance_probe": "财务处 (UDP探针)",

@@ -19,6 +19,7 @@ DEFAULT_STATIC_MAPPING = {
     "finance_probe": SERVER1_IP,
     "teach1": SERVER1_IP,
     "office1": SERVER1_IP,
+    "hr1": SERVER1_IP,
     "dorm1": SERVER2_IP,
     "lib1": SERVER2_IP,
 }

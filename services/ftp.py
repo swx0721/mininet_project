@@ -32,4 +32,4 @@ def start_ftp_server(server):
     server.cmd('echo "校园网将于本周六凌晨2:00-4:00进行维护升级。" > /tmp/ftp/notices/maintenance.txt')
 
     server.cmd("cd /tmp/ftp && python3 -m pyftpdlib -p 21 -w &")
-    info("[SERVICES] FTP 服务已启动 (ftp://10.0.100.2, 匿名可写)\n")
+    info("[SERVICES] FTP 服务已启动 (ftp://10.0.60.2, 匿名可写)\n")

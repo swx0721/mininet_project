@@ -2,8 +2,8 @@
 core/topology.py — 校园网络拓扑定义
 
 纯拓扑搭建模块，负责：
-  - 创建 Mininet 网络
-  - 创建路由器、交换机、主机
+  - 创建 Mininet 网络（宿舍/教学楼采用接入-汇聚二级交换结构）
+  - 创建路由器、交换机（接入层 / 汇聚层）、主机
   - 配置链路参数与路由
   - 验证连通性
 
@@ -27,49 +27,64 @@ from utils import print_separator, print_subnet_info
 
 # ==================== 子网与链路配置 ====================
 
+# 差异化子网划分：宿舍/教学楼 /20（约4094可用地址）满足大量终端接入；
+# 图书馆 /23（约510）、办公楼 /24（约254）适配中等终端密度；
+# 财务处 /26（约62）、人事处 /26（约62）限定精小可控范围。
+# 服务器 /28（约14）独立划块，与业务区域在地址空间上完全隔离。
+# 各子网在 10.0.0.0/16 空间内按功能分区排列，业务区（0~35）与服务器区（60+）分离。
 SUBNET_CONFIG = {
-    "dorm":    {"net": "10.0.1.0/24", "gw": "10.0.1.1",   "reserve": "10.0.11.0/24"},
-    "teach":   {"net": "10.0.2.0/24", "gw": "10.0.2.1",   "reserve": "10.0.12.0/24"},
-    "lib":     {"net": "10.0.3.0/24", "gw": "10.0.3.1",   "reserve": "10.0.13.0/24"},
-    "office":  {"net": "10.0.4.0/24", "gw": "10.0.4.1",   "reserve": "10.0.14.0/24"},
-    "finance": {"net": "10.0.5.0/24", "gw": "10.0.5.1",   "reserve": "10.0.15.0/24"},
-    "server":  {"net": "10.0.100.0/24", "gw": "10.0.100.1", "reserve": "10.0.110.0/24"},
-    "server2": {"net": "10.0.101.0/24", "gw": "10.0.101.1", "reserve": "10.0.111.0/24"},
+    "dorm":    {"net": "10.0.0.0/20", "gw": "10.0.0.1"},
+    "teach":   {"net": "10.0.16.0/20", "gw": "10.0.16.1"},
+    "lib":     {"net": "10.0.32.0/23", "gw": "10.0.32.1"},
+    "office":  {"net": "10.0.34.0/24", "gw": "10.0.34.1"},
+    "finance": {"net": "10.0.35.0/26", "gw": "10.0.35.1"},
+    "hr":      {"net": "10.0.35.64/26", "gw": "10.0.35.65"},
+    "server":  {"net": "10.0.60.0/28", "gw": "10.0.60.1"},
+    "server2": {"net": "10.0.60.16/28", "gw": "10.0.60.17"},
 }
 
 HOST_DEFINITIONS = [
-    ("dorm1",   "10.0.1.2/24",   "dorm"),
-    ("dorm2",   "10.0.1.3/24",   "dorm"),
-    ("teach1",  "10.0.2.2/24",   "teach"),
-    ("teach2",  "10.0.2.3/24",   "teach"),
-    ("lib1",    "10.0.3.2/24",   "lib"),
-    ("lib2",    "10.0.3.3/24",   "lib"),
-    ("office1", "10.0.4.2/24",   "office"),
-    ("office2", "10.0.4.3/24",   "office"),
-    ("finance1","10.0.5.2/24",   "finance"),
-    ("finance2","10.0.5.3/24",   "finance"),
-    ("server1", "10.0.100.2/24", "server"),    # s_server1 → r1-eth5
-    ("server2", "10.0.101.2/24", "server2"),   # s_server2 → r1-eth6（独立子网）
+    ("dorm1",   "10.0.0.2/20",   "dorm"),
+    ("dorm2",   "10.0.0.3/20",   "dorm"),
+    ("teach1",  "10.0.16.2/20",  "teach"),
+    ("teach2",  "10.0.16.3/20",  "teach"),
+    ("lib1",    "10.0.32.2/23",  "lib"),
+    ("lib2",    "10.0.32.3/23",  "lib"),
+    ("office1", "10.0.34.2/24",  "office"),
+    ("office2", "10.0.34.3/24",  "office"),
+    ("finance1","10.0.35.2/26",  "finance"),
+    ("finance2","10.0.35.3/26",  "finance"),
+    ("hr1",     "10.0.35.66/26", "hr"),
+    ("hr2",     "10.0.35.67/26", "hr"),
+    ("server1", "10.0.60.2/28", "server"),    # s_server1 → r1-eth5
+    ("server2", "10.0.60.18/28", "server2"),  # s_server2 → r1-eth6（独立子网）
 ]
 
-# 上行链路配置：各区域交换机 → 核心路由器
+# 上行链路配置：各区域汇聚层交换机（或单交换机） → 核心路由器
+# 宿舍区/教学楼采用接入-汇聚二级结构，汇聚交换机接核心路由器
+# 其他区域单交换机直连核心路由器
 # 注意：服务器双链路在 build_topology 中特殊处理（不在此列表中）
 UPLINK_CONFIG = [
-    ("dorm",    "r1-eth0", 100,  "5ms"),
-    ("teach",   "r1-eth1", 100,  "5ms"),
-    ("lib",     "r1-eth2", 100,  "5ms"),
-    ("office",  "r1-eth3", 100,  "5ms"),
-    ("finance", "r1-eth4", 100,  "5ms"),
+    ("dorm_agg", "r1-eth0", 100, "5ms"),
+    ("teach_agg","r1-eth1", 100, "5ms"),
+    ("lib",      "r1-eth2", 100, "5ms"),
+    ("office",   "r1-eth3", 100, "5ms"),
+    ("finance",  "r1-eth4", 100, "5ms"),
+    ("hr",       "r1-eth7", 100, "5ms"),
 ]
 
+# 接入层→汇聚层二级拓扑区域
+AGGREGATION_ZONES = {"dorm", "teach"}
+
 ROUTER_IPS = {
-    "r1-eth0": "10.0.1.1/24",
-    "r1-eth1": "10.0.2.1/24",
-    "r1-eth2": "10.0.3.1/24",
-    "r1-eth3": "10.0.4.1/24",
-    "r1-eth4": "10.0.5.1/24",
-    "r1-eth5": "10.0.100.1/24",   # 服务器1 独立链路（s_server1）
-    "r1-eth6": "10.0.101.1/24",   # 服务器2 独立链路（s_server2，对称）
+    "r1-eth0": "10.0.0.1/20",
+    "r1-eth1": "10.0.16.1/20",
+    "r1-eth2": "10.0.32.1/23",
+    "r1-eth3": "10.0.34.1/24",
+    "r1-eth4": "10.0.35.1/26",
+    "r1-eth7": "10.0.35.65/26",    # 人事处上行
+    "r1-eth5": "10.0.60.1/28",    # 服务器1 独立链路（s_server1）
+    "r1-eth6": "10.0.60.17/28",   # 服务器2 独立链路（s_server2，对称）
 }
 
 DEFAULT_LINK_PARAMS = {
@@ -78,6 +93,7 @@ DEFAULT_LINK_PARAMS = {
     "lib":     {"bw": 100, "delay": "5ms"},
     "office":  {"bw": 100, "delay": "5ms"},
     "finance": {"bw": 100, "delay": "5ms"},
+    "hr":      {"bw": 100, "delay": "5ms"},
     "server":  {"bw": 100, "delay": "1ms"},   # 服务器1 独立链路
     "server2": {"bw": 100, "delay": "1ms"},   # 服务器2 独立链路（对称）
 }
@@ -85,15 +101,15 @@ DEFAULT_LINK_PARAMS = {
 # ==================== 全局常量 ====================
 
 # 各区域上行链路接口（QoS 作用位置）
-ZONE_UPLINKS = ["r1-eth0", "r1-eth1", "r1-eth2", "r1-eth3", "r1-eth4"]
+ZONE_UPLINKS = ["r1-eth0", "r1-eth1", "r1-eth2", "r1-eth3", "r1-eth4", "r1-eth7"]
 
 # 服务器出口接口（负载均衡实验独立链路）
 SERVER1_INTF = "r1-eth5"
 SERVER2_INTF = "r1-eth6"
 
 # 服务器 IP
-SERVER1_IP = "10.0.100.2"
-SERVER2_IP = "10.0.101.2"   # 独立子网，通过 s_server2 → r1-eth6
+SERVER1_IP = "10.0.60.2"
+SERVER2_IP = "10.0.60.18"   # 独立子网，通过 s_server2 → r1-eth6
 
 # 各区域上行链路基准带宽（用于 QoS 实验，基于 DEFAULT_LINK_PARAMS）
 ZONE_BASELINE_BW = {
@@ -102,6 +118,7 @@ ZONE_BASELINE_BW = {
     "r1-eth2": 100,  # lib
     "r1-eth3": 100,  # office
     "r1-eth4": 100,  # finance
+    "r1-eth7": 100,  # hr
 }
 
 
@@ -126,14 +143,20 @@ def build_topology(with_cli=True, access_bw=None, access_delay=None,
 
     # ---------- 创建交换机 ----------
     switches = {}
-    zone_order = ["dorm", "teach", "lib", "office", "finance"]
-    for zone in zone_order:
-        dpid = f"000000000000{zone_order.index(zone) + 1:04x}"
-        switches[zone] = net.addSwitch(f"s_{zone}", dpid=dpid)
-    
+
+    # 宿舍区/教学楼：3 台接入交换机 + 1 台汇聚交换机（接入-汇聚二级结构）
+    for zone in ("dorm", "teach"):
+        for i in range(1, 4):  # s_dorm1/2/3, s_teach1/2/3
+            switches[f"{zone}{i}"] = net.addSwitch(f"s_{zone}{i}")
+        switches[f"{zone}_agg"] = net.addSwitch(f"s_{zone}_agg")
+
+    # 其他区域：单交换机直连核心路由器
+    for zone in ("lib", "office", "finance", "hr"):
+        switches[zone] = net.addSwitch(f"s_{zone}")
+
     # 服务器双交换机（对称结构）
-    switches["s_server1"] = net.addSwitch("s_server1", dpid="0000000000000006")
-    switches["s_server2"] = net.addSwitch("s_server2", dpid="0000000000000007")
+    switches["s_server1"] = net.addSwitch("s_server1")
+    switches["s_server2"] = net.addSwitch("s_server2")
 
     # ---------- 创建主机 ----------
     hosts = {}
@@ -152,19 +175,30 @@ def build_topology(with_cli=True, access_bw=None, access_delay=None,
 
     for name, ip, zone in HOST_DEFINITIONS:
         params = link_params[zone]
-        # 特殊处理：server1 → s_server1, server2 → s_server2
+        # server1/2 特殊处理：各自独立交换机
         if name == "server1":
             net.addLink(hosts[name], switches["s_server1"],
                         bw=params["bw"], delay=params["delay"])
         elif name == "server2":
             net.addLink(hosts[name], switches["s_server2"],
                         bw=params["bw"], delay=params["delay"])
+        elif zone in AGGREGATION_ZONES:
+            # 宿舍区/教学楼：终端连接第 1 台接入交换机（s_dorm1 / s_teach1）
+            net.addLink(hosts[name], switches[f"{zone}1"],
+                        bw=params["bw"], delay=params["delay"])
         else:
             net.addLink(hosts[name], switches[zone],
                         bw=params["bw"], delay=params["delay"])
 
+    # ---------- 接入-汇聚链路（仅宿舍/教学楼） ----------
+    # 3 台接入交换机 → 汇聚交换机，区内时延 1ms，带宽 100Mbps
+    for zone in ("dorm", "teach"):
+        for i in range(1, 4):
+            net.addLink(switches[f"{zone}{i}"], switches[f"{zone}_agg"],
+                        bw=100, delay="1ms")
+
     # ---------- 上行链路 ----------
-    # 标准区域上行链路
+    # 汇聚交换机（或单交换机）→ 核心路由器
     for zone, intf_name, bw, delay in UPLINK_CONFIG:
         effective_bw = core_bw if core_bw is not None else bw
         net.addLink(switches[zone], r1, intfName2=intf_name,

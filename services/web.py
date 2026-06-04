@@ -52,7 +52,7 @@ os.chdir('/tmp/www')
 server = ThreadedHTTPServer(('0.0.0.0', 80), http.server.SimpleHTTPRequestHandler)
 server.serve_forever()
 " &''')
-    info("[SERVICES] Web 服务已启动 (http://10.0.100.2)\n")
+    info("[SERVICES] Web 服务已启动 (http://10.0.60.2)\n")
 
 
 def create_test_file(server, filename, size_mb=2):

@@ -77,8 +77,8 @@ def test_acl(sub_net, sub_r1, sub_hosts):
 
     results = []
     tests = [
-        ("dorm1", "finance1", "10.0.5.2", False, "宿舍→财务处 (应阻断)"),
-        ("office1", "finance1", "10.0.5.2", True, "办公→财务处 (应放行)"),
+        ("dorm1", "finance1", "10.0.35.2", False, "宿舍→财务处 (应阻断)"),
+        ("office1", "finance1", "10.0.35.2", True, "办公→财务处 (应放行)"),
     ]
 
     for src_name, dst_name, dst_ip, expect_pass, desc in tests:
@@ -138,8 +138,8 @@ def test_port_scan(sub_net, sub_r1, sub_hosts):
         info("  ⚠ dorm1 不存在，跳过\n")
         return []
 
-    src_ip = "10.0.1.2"
-    dst_ip = "10.0.100.2"
+    src_ip = "10.0.0.2"
+    dst_ip = "10.0.60.2"
 
     reset_scan_tracker()
 
@@ -178,7 +178,7 @@ def test_port_scan(sub_net, sub_r1, sub_hosts):
         else:
             info("  ⚠ iptables 中未找到对应 DROP 规则\n")
 
-        post_ban_output = dorm1.cmd("ping -c 3 -W 2 10.0.100.2")
+        post_ban_output = dorm1.cmd("ping -c 3 -W 2 10.0.60.2")
         loss_match = re.search(r'(\d+)% packet loss', post_ban_output)
         post_ban_loss = int(loss_match.group(1)) if loss_match else 100
         post_ban_ok = (post_ban_loss == 0)
@@ -237,7 +237,7 @@ def test_flood_protection(sub_net, sub_r1, sub_hosts):
 
     # ---- ICMP Flood 测试 ----
     info("  ICMP Flood 测试: 快速 ping 10 次 (间隔 0.1s)...\n")
-    output = dorm1.cmd("ping -c 10 -i 0.1 10.0.100.2")
+    output = dorm1.cmd("ping -c 10 -i 0.1 10.0.60.2")
     received = 0
     transmitted = 0
     for line in output.split("\n"):
@@ -261,7 +261,7 @@ def test_flood_protection(sub_net, sub_r1, sub_hosts):
     icmp_protected = loss_pct > 0  # 有丢包说明限速生效
     if icmp_protected:
         info("  ✅ ICMP Flood 防护生效 (检测到限速丢包)\n")
-        record_event("FLOOD", "10.0.1.2", "10.0.100.2",
+        record_event("FLOOD", "10.0.0.2", "10.0.60.2",
                      f"ICMP Flood: {transmitted}发/{received}收, 丢包{loss_pct:.1f}%",
                      severity="WARNING", r1=sub_r1)
     else:
@@ -286,7 +286,7 @@ def test_flood_protection(sub_net, sub_r1, sub_hosts):
             out = dorm1.cmd(
                 "curl -s -o /dev/null -w '%{http_code}' "
                 "--connect-timeout 0.5 --max-time 2 "
-                "http://10.0.100.2/ 2>/dev/null || echo '000'"
+                "http://10.0.60.2/ 2>/dev/null || echo '000'"
             )
             code = out.strip()
             with syn_lock:
@@ -314,7 +314,7 @@ def test_flood_protection(sub_net, sub_r1, sub_hosts):
          f"失败/超时={syn_count['fail']}, 错误={syn_count['error']}\n")
 
     # 记录 FLOOD 事件
-    record_event("FLOOD", "10.0.1.2", "10.0.100.2",
+    record_event("FLOOD", "10.0.0.2", "10.0.60.2",
                  f"TCP SYN Flood模拟: 50并发, 成功{syn_count['success']}/失败{syn_count['fail']}",
                  severity="CRITICAL", r1=sub_r1)
 
