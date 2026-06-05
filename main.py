@@ -73,7 +73,9 @@ def parse_args():
 
     # ---- 实验选择 ----
     parser.add_argument("--experiment", type=str, default=None,
-                        choices=["qos_ablation", "lb_ablation", "security_test", "security_ablation"],
+                        choices=["qos_ablation", "lb_ablation", "security_test",
+                                 "security_ablation", "vpn_test", "acl_vpn_test",
+                                 "nat_test", "dual_campus_test"],
                         help="运行指定实验")
     parser.add_argument("--auto", action="store_true",
                         help="一键运行全部实验")
@@ -225,6 +227,10 @@ def mode_experiment(experiment_name, args):
     elif experiment_name == "security_ablation":
         from experiments.run_security_ablation import run_security_ablation
         run_security_ablation()
+
+    elif experiment_name in ("vpn_test", "acl_vpn_test", "nat_test", "dual_campus_test"):
+        from experiments.run_extended_experiments import run_extended_experiment
+        run_extended_experiment(experiment_name)
 
 
 def mode_auto(args):
