@@ -145,18 +145,24 @@ def build_topology(with_cli=True, access_bw=None, access_delay=None,
     switches = {}
 
     # 宿舍区/教学楼：3 台接入交换机 + 1 台汇聚交换机（接入-汇聚二级结构）
-    for zone in ("dorm", "teach"):
+    # 注：汇聚交换机名必须 ≤ 11 字符，否则 Linux IFNAMSIZ(15) 限制导致接口名超长崩溃
+    # sd_agg / st_agg：s_dorm_agg-eth1 为 15 字符已达上限；s_teach_agg-eth1 为 16 字符超限
+    for zone, short, agg_dpid in [("dorm", "sd", "0000000000000100"),
+                                    ("teach", "st", "0000000000000200")]:
         for i in range(1, 4):  # s_dorm1/2/3, s_teach1/2/3
             switches[f"{zone}{i}"] = net.addSwitch(f"s_{zone}{i}")
-        switches[f"{zone}_agg"] = net.addSwitch(f"s_{zone}_agg")
+        switches[f"{zone}_agg"] = net.addSwitch(f"{short}_agg", dpid=agg_dpid)
 
     # 其他区域：单交换机直连核心路由器
-    for zone in ("lib", "office", "finance", "hr"):
-        switches[zone] = net.addSwitch(f"s_{zone}")
+    # 显式指定 dpid，因为 s_lib/s_office/s_finance/s_hr 不含数字，
+    # Mininet 无法自动推导 datapath ID
+    for zone, dpid in [("lib", "0000000000000004"), ("office", "0000000000000005"),
+                        ("finance", "0000000000000006"), ("hr", "0000000000000007")]:
+        switches[zone] = net.addSwitch(f"s_{zone}", dpid=dpid)
 
     # 服务器双交换机（对称结构）
-    switches["s_server1"] = net.addSwitch("s_server1")
-    switches["s_server2"] = net.addSwitch("s_server2")
+    switches["s_server1"] = net.addSwitch("s_server1", dpid="0000000000000008")
+    switches["s_server2"] = net.addSwitch("s_server2", dpid="0000000000000009")
 
     # ---------- 创建主机 ----------
     hosts = {}

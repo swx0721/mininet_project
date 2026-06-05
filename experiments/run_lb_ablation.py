@@ -5,8 +5,8 @@ experiments/run_lb_ablation.py — 实验二：负载均衡消融实验
   Final（QoS + LB + Security） vs  Final − LB（QoS + Security）
 
 实验场景——双服务器按区域分工：
-  Server1（10.0.60.2）：财务处、人事处、教学楼、办公楼
-  Server2（10.0.60.18）：宿舍区、图书馆
+  Server1（10.0.100.2）：财务处、人事处、教学楼、办公楼
+  Server2（10.0.101.2）：宿舍区、图书馆
 
   Static 绑定下，各区域固定分配至对应服务器。
   Round Robin 下请求轮流分配 → 50:50 均衡。
@@ -40,7 +40,7 @@ from policies.load_balance import LoadBalancer
 
 # 负载均衡实验：服务器链路瓶颈带宽 (Mbps)
 # 设计意图：制造拥塞瓶颈，使负载均衡的价值得以体现。
-# Static 模式下 S1 获得更多流量（λ=1.7 vs S2 λ=1.5），瓶颈处产生排队；
+# Static 模式下 S1 获得更多流量（λ=2.0 vs S2 λ=1.7），瓶颈处产生排队；
 # RR 模式下负载均分（50:50），两侧瓶颈均摊，从而体现负载均衡优势。
 #
 # ⚠️ HTB 作用位置：服务器出口（server1-eth0 / server2-eth0），
@@ -55,39 +55,39 @@ BIGFILE_URL = "/lbfile.bin"
 # ==================== 负载均衡消融实验专用静态映射 ====================
 #
 # 映射规则（与 DEFAULT_STATIC_MAPPING 一致）：
-#   Server1（10.0.60.2）：财务处、人事处、教学楼、办公楼
-#   Server2（10.0.60.18）：宿舍区、图书馆
+#   Server1（10.0.100.2）：财务处、人事处、教学楼、办公楼
+#   Server2（10.0.101.2）：宿舍区、图书馆
 #
-# 负载分布（场景 B：S1 高负载 → 拥塞效应显著）：
-#   Server1 λ 合计 = 0.18+0.10+0.12+0.10 = 0.50 → ~100%利用率（高负载，产生拥塞）
-#   Server2 λ 合计 = 0.12+0.08           = 0.20 → 40%利用率（中低负载，有余量）
+# 负载分布（中负载稳定区：避免排队主导区带来的非线性失真）：
+#   Server1 λ 合计 = 0.18 + 0.12 + 0.10 + 0.10 = 0.50 (71%)
+#   Server2 λ 合计 = 0.12 + 0.08             = 0.20 (29%)
 #
 # 需求分析（5MB 文件，20Mbps 瓶颈）：
 #   单文件最低耗时 = 5×8÷20 = 2s
-#   S1 需求: 0.50×60 = 30 请求 → 30×2=60s → ~100% 利用率（过载边缘）
-#   S2 需求: 0.20×60 = 12 请求 → 12×2=24s → 40% 利用率
-#   总请求 ≈ 42，总需求 28Mbps = 70% 总容量 → 高负载区，调度差异显著
+#   S1 需求: 0.50×60 = 30 请求 → 30×2=60s → 100% 利用率（高负载，拥塞区）
+#   S2 需求: 0.20×60 = 12 请求 → 12×2=24s → 40% 利用率（中低负载，有余量）
+#   总请求 ≈ 42，总需求 28Mbps = 70% 总容量 → 中高负载区
 #
-# Static 下 S1(~100%) vs S2(40%) 负载严重不均；RR 下均摊至各约 70%。
+# Static 下 S1(100%) vs S2(40%) 严重不均；RR 下均摊至各约 70%。
 #
 LB_STATIC_MAPPING = {
-    "finance1": SERVER1_IP,  # 财务处
-    "teach1":   SERVER1_IP,  # 教学楼
-    "office1":  SERVER1_IP,  # 办公楼
-    "hr1":      SERVER1_IP,  # 人事处
-    "dorm1":    SERVER2_IP,  # 宿舍区
-    "lib1":     SERVER2_IP,  # 图书馆
+    "finance1": SERVER1_IP,  # λ=0.18  财务处
+    "teach1":   SERVER1_IP,  # λ=0.12  教学楼
+    "office1":  SERVER1_IP,  # λ=0.10  办公楼
+    "hr1":      SERVER1_IP,  # λ=0.10  人事处
+    "dorm1":    SERVER2_IP,  # λ=0.12  宿舍区
+    "lib1":     SERVER2_IP,  # λ=0.08  图书馆
 }
-# S1 λ = 0.18+0.10+0.12+0.10 = 0.50 → ~100%利用率（高负载，产生拥塞）
-# S2 λ = 0.12+0.08           = 0.20 → 40%利用率（中低负载，有余量）
+# S1 λ = 0.18 + 0.12 + 0.10 + 0.10 = 0.50 → 100%利用率（高负载，RR 均衡效果显著）
+# S2 λ = 0.12 + 0.08              = 0.20 → 40%利用率（中低负载，有余量）
 
 CLIENT_NODES = [
     ("dorm1", "宿舍区 (热点)"),
     ("lib1", "图书馆 (热点)"),
     ("office1", "办公楼 (热点)"),
-    ("hr1", "人事处 (普通)"),
     ("finance1", "财务处 (普通)"),
     ("teach1", "教学楼 (普通)"),
+    ("hr1", "人事处 (普通)"),
 ]
 
 LOAD_LAMBDA = {}
@@ -95,24 +95,24 @@ LOAD_LAMBDA = {}
 # ==================== 场景定义 ====================
 
 # 场景 A：S1/S2 双侧中等负载 — RR 效果不明显（作为场景 B 的对照基线）
-#   设计意图：S1 四区域和 S2 两区域都处于中等负载，Static 绑定下两侧均未过载；
+#   设计意图：S1 三区域和 S2 两区域都处于中等负载，Static 绑定下两侧均未过载；
 #             RR 均摊与 Static 静态分配的性能差异很小，说明 RR 在均衡负载时优势不突出；
 #             这作为场景 B（S1 高负载）的对照，证明 RR 的价值在负载不均时才显著。
 #
-#   S1 λ 合计 = 0.12+0.06+0.08+0.06 = 0.32 → 利用率≈64%
-#   S2 λ 合计 = 0.10+0.06           = 0.16 → 利用率≈32%
+#   S1 λ 合计 = 0.12+0.08+0.06+0.06 = 0.32 → 利用率≈64%（单文件2s，32请求/min，约64s）
+#   S2 λ 合计 = 0.10+0.06           = 0.16 → 利用率≈32%（中等，有余量）
 #   两侧都不超载，Static/RR 效果差异预期较小
 LB_SCENARIO_A = {
-    "finance1": 0.12, "teach1": 0.08, "office1": 0.06, "hr1": 0.06,
-    "dorm1": 0.10, "lib1": 0.06,
+    "finance1": 0.12, "teach1": 0.08, "office1": 0.06,
+    "dorm1": 0.10, "lib1": 0.06, "hr1": 0.06,
 }
 
 # 场景 B：Server1 高负载 — S1 明显高于 S2（默认，不变）
-#   S1 λ 合计 = 0.18+0.10+0.12+0.10 = 0.50 → ~100%利用率（高负载，产生拥塞）
+#   S1 λ 合计 = 0.18+0.12+0.10+0.10 = 0.50 → 100%利用率（高负载，拥塞区）
 #   S2 λ 合计 = 0.12+0.08           = 0.20 → 40%利用率（中低负载，有余量）
 LB_SCENARIO_B = {
-    "finance1": 0.18, "teach1": 0.12, "office1": 0.10, "hr1": 0.10,
-    "dorm1": 0.12, "lib1": 0.08,
+    "finance1": 0.18, "teach1": 0.12, "office1": 0.10,
+    "dorm1": 0.12, "lib1": 0.08, "hr1": 0.10,
 }
 
 SCENARIO_LAMBDA_MAP = {"A": LB_SCENARIO_A, "B": LB_SCENARIO_B}
@@ -376,7 +376,7 @@ def run_single_lb_experiment(algorithm, algo_label, duration=60):
         s1_lam = LOAD_LAMBDA.get("finance1", 0) + LOAD_LAMBDA.get("teach1", 0) + \
                  LOAD_LAMBDA.get("office1", 0) + LOAD_LAMBDA.get("hr1", 0)
         s2_lam = LOAD_LAMBDA.get("dorm1", 0) + LOAD_LAMBDA.get("lib1", 0)
-        info(f"[LB_ABLATION]   静态映射: Server1 ← finance1/hr1/teach1/office1 (λ={s1_lam:.2f}), "
+        info(f"[LB_ABLATION]   静态映射: Server1 ← finance1/teach1/office1/hr1 (λ={s1_lam:.2f}), "
              f"Server2 ← dorm1/lib1 (λ={s2_lam:.2f})\n")
     results, elapsed = generate_traffic(net, hosts, balancer, duration=duration, max_wait=300)
     stats = compute_statistics(results, elapsed, algo_label)
@@ -429,7 +429,7 @@ def run_lb_ablation(duration=60, scenario="B"):
     info(f"[LB_ABLATION] S1 λ 合计={s1_lambda:.2f} (Static→{s1_lambda*LOAD_FILE_MB*8/LB_BOTTLENECK_MBPS*100:.0f}%util), "
          f"S2 λ 合计={s2_lambda:.2f} (Static→{s2_lambda*LOAD_FILE_MB*8/LB_BOTTLENECK_MBPS*100:.0f}%util), "
          f"总 λ={s1_lambda+s2_lambda:.2f}\n")
-    info(f"[LB_ABLATION] 区域分工: Server1 ← finance1/hr1/teach1/office1 (λ={s1_lambda:.2f}), "
+    info(f"[LB_ABLATION] 区域分工: Server1 ← finance1/teach1/office1/hr1 (λ={s1_lambda:.2f}), "
          f"Server2 ← dorm1/lib1 (λ={s2_lambda:.2f})\n")
     info(f"[LB_ABLATION] 文件: {LOAD_FILE_MB}MB, 瓶颈: {LB_BOTTLENECK_MBPS}Mbps×2 "
          f"(总需求{total_demand:.0f}Mbps={capacity_pct:.0f}%容量)\n")
@@ -490,8 +490,8 @@ def run_lb_ablation(duration=60, scenario="B"):
     save_to_json(f"lb_ablation_{ts}.json",
                  {
                      "实验设计": "负载均衡消融实验：中负载稳定区（60%总容量）",
-                     "区域分工": "Server1←finance1/hr1/teach1/office1, Server2←dorm1/lib1",
-                     "消融逻辑": "去掉LB→S1(80%)vsS2(40%)不均衡, 加入RR→均摊至各60%→时延改善",
+                     "区域分工": "Server1←finance1/teach1/office1/hr1 (λ=0.50/100%util), Server2←dorm1/lib1 (λ=0.20/40%util)",
+                     "消融逻辑": "去掉LB→S1(100%)vsS2(40%)不均衡, 加入RR→均摊至各70%→时延改善",
                      "static": static_stats, "round_robin": rr_stats,
                  },
                  subdir="load_balance")
