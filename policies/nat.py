@@ -50,7 +50,7 @@ def enable_nat(inet_rt):
     # 启用 IP 转发
     inet_rt.cmd("sysctl -w net.ipv4.ip_forward=1")
     
-    info("[NAT] MASQUERADE 已启用: {CAMPUS_A_SUBNET} → {NAT_EXTERNAL_IFACE}\n")
+    info(f"[NAT] MASQUERADE 已启用: {CAMPUS_A_SUBNET} → {NAT_EXTERNAL_IFACE}\n")
 
 
 def disable_nat(inet_rt):

@@ -252,10 +252,18 @@ def _configure_extended_routes(r1, extra_nodes, include_vpn, include_nat, includ
         inet_rt = extra_nodes["routers"]["inet_rt"]
         
         inet_rt.cmd("sysctl -w net.ipv4.ip_forward=1")
-        inet_rt.cmd("ip route add 10.0.0.0/16 via 10.0.34.1 dev inet_rt-eth2 2>/dev/null || true")
+        # 公网路由器：MASQUERADE 将校园网出站流量源地址转换
+        inet_rt.cmd(
+            "iptables -t nat -A POSTROUTING "
+            "-s 10.0.0.0/16 -o inet_rt-eth1 "
+            "-j MASQUERADE"
+        )
+        # 允许转发校园网→公网
+        inet_rt.cmd("iptables -A FORWARD -i inet_rt-eth2 -o inet_rt-eth1 -j ACCEPT")
+        inet_rt.cmd("iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT")
         
-        # r1：添加去往公网的路由
-        r1.cmd("ip route add 203.0.113.0/28 via 203.0.113.1 dev r1-eth8 2>/dev/null || true")
+        # r1：添加去往公网的路由，下一跳为 inet_rt 的接口 IP
+        r1.cmd("ip route add 203.0.113.0/28 dev r1-eth8 2>/dev/null || ip route add 203.0.113.0/28 via 203.0.113.1")
         info("[EXTENDED] NAT 路由已配置\n")
     
     # ── 双校区路由 ──

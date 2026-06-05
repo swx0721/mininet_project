@@ -35,6 +35,10 @@ def run_vpn_test():
     from policies.vpn import (setup_vpn_gateway, apply_vpn_routing,
                              test_vpn_connectivity, print_vpn_test_results, list_vpn_users)
     from security.acl_vpn import apply_vpn_acl_policies, print_identity_matrix
+    from services.web import start_web_server
+    from services.ftp import start_ftp_server
+    from services.iperf import start_dual_iperf
+    from core.server_cluster import get_server_hosts
 
     # 构建扩展拓扑（导出所有节点）
     net, r1, hosts, switches, extra = create_fresh_extended_network(
@@ -45,6 +49,14 @@ def run_vpn_test():
 
     vpn_gw = extra["routers"]["vpn_gw"]
     home_pc = extra["hosts"]["home_pc"]
+
+    # 启动 Web/FTP/iperf3 服务（VPN 用户需要访问）
+    server1, server2 = get_server_hosts(hosts)
+    start_web_server(server1)
+    start_web_server(server2)
+    start_ftp_server(server1)
+    start_ftp_server(server2)
+    start_dual_iperf(server1, server2)
 
     # 1. 配置 VPN 网关
     setup_vpn_gateway(r1, vpn_gw)
