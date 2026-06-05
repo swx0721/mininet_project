@@ -149,61 +149,63 @@ def _resolve_model(config):
 def mode_model(model_name, args, config=None):
     """
     模型驱动模式：部署指定模型并启动网络。
+    所有 deploy 逻辑内联实现，直接调用 core/policies/security 模块，无需 models/ 目录。
     """
     from utils import print_separator
+    from core.topology import create_fresh_network
+    from core.server_cluster import get_server_hosts, DEFAULT_STATIC_MAPPING
+    from services.web import start_web_server
+    from services.ftp import start_ftp_server
+    from services.iperf import start_dual_iperf
 
     print_separator(f"CampusNet 模型驱动模式 — {model_name.upper()}")
 
     with_cli = not args.no_cli
-    strict = args.strict
     bottleneck_bw = args.bottleneck_bw
 
-    if model_name == "baseline":
-        from models.baseline import deploy_baseline
-        deploy_baseline(
-            with_cli=with_cli,
-            access_bw=args.bw,
-            access_delay=args.delay,
-            strict=strict,
-        )
+    # 构建基础网络拓扑
+    net, r1, hosts, switches = create_fresh_network(
+        access_bw=args.bw,
+        access_delay=args.delay,
+        core_bw=None,
+    )
 
-    elif model_name == "qos":
-        from models.qos_model import deploy_qos_model
-        deploy_qos_model(
-            with_cli=with_cli,
-            access_bw=args.bw,
-            access_delay=args.delay,
-            bottleneck_bw=bottleneck_bw,
-            strict=strict,
-        )
+    server1, server2 = get_server_hosts(hosts)
 
-    elif model_name == "lb":
-        from models.lb_model import deploy_lb_model
-        deploy_lb_model(
-            with_cli=with_cli,
-            access_bw=args.bw,
-            access_delay=args.delay,
-            strict=strict,
-        )
+    # 启动 Web/FTP/iperf3 服务（所有模型都需要）
+    start_web_server(server1)
+    start_web_server(server2)
+    start_ftp_server(server1)
+    start_ftp_server(server2)
+    start_dual_iperf(server1, server2)
 
-    elif model_name == "security":
-        from models.security_model import deploy_security_model
-        deploy_security_model(
-            with_cli=with_cli,
-            access_bw=args.bw,
-            access_delay=args.delay,
-            strict=strict,
-        )
+    # 根据模型名称叠加策略
+    if model_name in ("qos", "final"):
+        from policies.qos import apply_htb_policy
+        apply_htb_policy(r1, bottleneck_bw=bottleneck_bw)
 
-    elif model_name == "final":
-        from models.final import deploy_final
-        deploy_final(
-            with_cli=with_cli,
-            access_bw=args.bw,
-            access_delay=args.delay,
-            bottleneck_bw=bottleneck_bw,
-            strict=strict,
-        )
+    if model_name in ("lb", "final"):
+        from policies.load_balance import LoadBalancer
+        lb = LoadBalancer(algorithm="round_robin")
+        info(f"[DEPLOY] 负载均衡已启用 (Round Robin)\n")
+
+    if model_name in ("security", "final"):
+        from security.acl import apply_stateful_firewall, apply_acl_policies, apply_default_drop
+        from security.intrusion import apply_intrusion_detection
+        from security.audit_db import init_db
+        apply_stateful_firewall(r1)
+        apply_acl_policies(r1)
+        apply_default_drop(r1)
+        apply_intrusion_detection(r1)
+        init_db(r1)
+        info("[DEPLOY] 安全策略已部署 (ACL + IDS + SQLite)\n")
+
+    # 可选 CLI
+    if with_cli:
+        from mininet.cli import CLI
+        CLI(net)
+
+    net.stop()
 
 
 def mode_experiment(experiment_name, args):

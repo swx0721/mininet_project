@@ -118,7 +118,7 @@ def build_extended_topology(with_cli=True, access_bw=None, access_delay=None, co
         extra_nodes["hosts"]["home_pc"] = home_pc
         
         # 家庭网络交换机
-        home_sw = net.addSwitch("s_home", cls=OVSBridge)
+        home_sw = net.addSwitch("s_home", cls=OVSBridge, dpid="0000000000001000")
         extra_nodes["switches"]["s_home"] = home_sw
         
         # 链路：家庭 PC → 家庭交换机 → 家庭路由器
@@ -154,7 +154,7 @@ def build_extended_topology(with_cli=True, access_bw=None, access_delay=None, co
         extra_nodes["hosts"]["ext_server"] = ext_server
         
         # 公网交换机
-        inet_sw = net.addSwitch("s_inet", cls=OVSBridge)
+        inet_sw = net.addSwitch("s_inet", cls=OVSBridge, dpid="0000000000001001")
         extra_nodes["switches"]["s_inet"] = inet_sw
         
         # 链路：外网服务器 → 公网交换机 → 公网路由器
@@ -190,7 +190,7 @@ def build_extended_topology(with_cli=True, access_bw=None, access_delay=None, co
         extra_nodes["hosts"]["campusb_h1"] = campusb_h1
         
         # Campus-B 交换机
-        campusb_sw = net.addSwitch("s_campusb", cls=OVSBridge)
+        campusb_sw = net.addSwitch("s_campusb", cls=OVSBridge, dpid="0000000000001002")
         extra_nodes["switches"]["s_campusb"] = campusb_sw
         
         # 链路：Campus-B 主机 → 交换机 → Campus-B 路由器
