@@ -200,6 +200,14 @@ def mode_model(model_name, args, config=None):
         init_db(r1)
         info("[DEPLOY] 安全策略已部署 (ACL + IDS + SQLite)\n")
 
+    # 初始化交互式文件系统（拓扑文件系统，与 Mininet 节点同构）
+    try:
+        from network_cli import init_fs_topology
+        init_fs_topology([h.name for h in net.hosts])
+        info("[DEPLOY] fs_topology/ 文件系统已初始化\n")
+    except ImportError:
+        pass
+
     # 可选 CLI
     if with_cli:
         from mininet.cli import CLI

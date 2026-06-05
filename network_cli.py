@@ -30,15 +30,32 @@ import shutil
 from datetime import datetime
 
 # ============================================================
-# 路径配置
+# 路径配置（__file__ 在 py exec() 中不可用，回退到 cwd）
 # ============================================================
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+try:
+    PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    PROJECT_ROOT = os.getcwd()
+
 RESOURCES_DIR = os.path.join(PROJECT_ROOT, "resources")
-FS_TOPOLOGY_DIR = os.path.join(PROJECT_ROOT, "results", "fs_topology")
-RUNTIME_LOG = os.path.join(PROJECT_ROOT, "results", "runtime_transfer.json")
+FS_TOPOLOGY_DIR = os.path.join(PROJECT_ROOT, "fs_topology")
+RUNTIME_LOG = os.path.join(PROJECT_ROOT, "fs_topology", "runtime_transfer.json")
 INBOX = "inbox"
 OUTBOX = "outbox"
+
+# 预置示例文件列表（拓扑构建时写入各主机 outbox）
+PRESET_SENDER_FILES = {
+    "office1": [("通知_2026.docx", "docs/notice.docx"), ("财务报告.xlsx", "docs/report.pdf")],
+    "teach1":  [("课件_计算机网络.pdf", "docs/ebook.pdf"), ("实验指导.docx", "docs/notice.docx")],
+    "library": [],   # 预留，会从 resources/ 中获取
+    "dorm1":   [("校园风景.jpg", "images/campus.jpg"), ("社团海报.png", "images/logo.png")],
+    "dorm2":   [("课程资料.zip", "zip/archive.zip")],
+    "finance1": [("财务通知.docx", "docs/notice.docx")],
+    "hr1":     [("人事档案.pdf", "docs/report.pdf")],
+    "home_pc": [("VPN测试文件.pdf", "docs/ebook.pdf")],
+    "campusb_h1": [("校区B课件.pdf", "docs/ebook.pdf")],
+}
 
 # ============================================================
 # 路由路径知识库（基于当前拓扑，支持扩展至双校区）
@@ -94,24 +111,39 @@ def _resolve_path(src, dst):
 # ============================================================
 
 def init_fs_topology(host_list):
-    """初始化 fs_topology 目录结构，为每个主机创建 inbox/outbox。"""
+    """
+    初始化 fs_topology/ 目录结构，为每个主机创建 inbox/outbox。
+    预置发送方 outbox 中的示例文件（模拟校园网日常文件）。
+    """
     os.makedirs(FS_TOPOLOGY_DIR, exist_ok=True)
 
     nodes_dir = os.path.join(FS_TOPOLOGY_DIR, "nodes")
     os.makedirs(nodes_dir, exist_ok=True)
 
+    created = 0
+    populated = 0
     for host_name in host_list:
         host_dir = os.path.join(nodes_dir, host_name)
         os.makedirs(os.path.join(host_dir, INBOX), exist_ok=True)
         os.makedirs(os.path.join(host_dir, OUTBOX), exist_ok=True)
+        created += 1
+
+        # 预置发送方文件（模拟校园网用户已有待发送的文件）
+        # 只匹配实际存在于 host_list 中的主机名
+        for display_name, resource_path in PRESET_SENDER_FILES.get(host_name, []):
+            res_file = os.path.join(RESOURCES_DIR, resource_path)
+            if os.path.exists(res_file):
+                dst_file = os.path.join(host_dir, OUTBOX, display_name)
+                if not os.path.exists(dst_file):
+                    shutil.copy2(res_file, dst_file)
+                    populated += 1
 
     # 初始化 JSON 日志
     if not os.path.exists(RUNTIME_LOG):
         with open(RUNTIME_LOG, "w") as f:
             json.dump({"transfers": [], "_generated": str(datetime.now())}, f, indent=2)
 
-    print(f"[FS] 拓扑文件系统已初始化: {FS_TOPOLOGY_DIR}/nodes/")
-    print(f"[FS] 已注册 {len(host_list)} 个节点")
+    print(f"[FS] fs_topology/ 已创建 ({created} 个节点, {populated} 个预置文件)")
     return True
 
 
@@ -244,16 +276,21 @@ def cmd_send(net, src_name, dst_name, filename):
     path = _resolve_path(src_name, dst_name)
     print(f"[ROUTE] 路径: {' → '.join(path)}")
 
-    # 4. QoS 模拟延迟（根据路径长度和源区域优先级计算）
+    # 4. 发送方 outbox 写入副本（发送记录）
+    src_outbox = os.path.join(FS_TOPOLOGY_DIR, "nodes", src_name, OUTBOX)
+    os.makedirs(src_outbox, exist_ok=True)
+    shutil.copy2(res_path, os.path.join(src_outbox, filename))
+
+    # 5. QoS 模拟延迟
     qos_delay_ms = 0
     if src_name.startswith("finance"):
-        qos_delay_ms = 2  # 财务处 prio=0 高优先级 → 低延迟
+        qos_delay_ms = 2
     elif "r1" in path:
         qos_delay_ms = len([h for h in path if h == "r1" or "agg" in h]) * 3
     if qos_delay_ms > 0:
         time.sleep(qos_delay_ms / 1000.0)
 
-    # 4. 通过 netcat 传输
+    # 6. 通过 netcat 传输到目标主机 inbox
     dst_inbox = os.path.join(FS_TOPOLOGY_DIR, "nodes", dst_name, INBOX)
     os.makedirs(dst_inbox, exist_ok=True)
     dst_file = os.path.join(dst_inbox, filename)
@@ -302,17 +339,22 @@ def cmd_msg(src_host, dst_host, message):
     path = _resolve_path(src_host.name, dst_host.name)
     print(f"[ROUTE] 路径: {' → '.join(path)}")
 
-    # 在目标主机启动 netcat 监听
+    # 写入接收方 inbox 为 .txt 文件（可视化传输结果）
+    dst_inbox = os.path.join(FS_TOPOLOGY_DIR, "nodes", dst_host.name, INBOX)
+    os.makedirs(dst_inbox, exist_ok=True)
+    ts = datetime.now().strftime("%H%M%S")
+    msg_file = os.path.join(dst_inbox, f"msg_{src_host.name}_{ts}.txt")
+    content = f"From: {src_host.name}\nTo: {dst_host.name}\nTime: {datetime.now()}\n---\n{message}\n"
+    with open(msg_file, "w", encoding="utf-8") as f:
+        f.write(content)
+
+    # 同时通过 netcat 发送（保持网络层模拟）
     dst_host.cmd("nc -l -p 9998 -w 5 > /tmp/msg_received.txt &")
     time.sleep(0.2)
-
-    # 发送消息 — 使用 nc（netcat 的 Mininet 节点命令）
     src_host.cmd(f"echo '{message}' | nc -w 3 {_get_ip(dst_host)} 9998")
     time.sleep(0.5)
 
-    # 读取接收到的消息
-    received = dst_host.cmd("cat /tmp/msg_received.txt 2>/dev/null").strip()
-    print(f"[MSG] 已送达: \"{received}\"")
+    print(f"[MSG] 已写入: fs_topology/nodes/{dst_host.name}/{INBOX}/{os.path.basename(msg_file)}")
 
 
 def cmd_ls(host):
@@ -517,23 +559,23 @@ def register_cli_commands():
 
 def register(net):
     """
-    在 Mininet CLI 启动前注册命令。
-    
-    在 mininet> 中执行:
-        py exec(open('network_cli.py').read()); register(net)
-    
-    之后即可使用:
-        send dorm1 dorm2 campus.jpg
-        msg office1 dorm1 "hello"
-        ls dorm1
-        trace dorm1 office1
-        resources
+    在 Mininet CLI 中加载并注册框架命令。
+
+    Mininet CLI 中执行（单条命令，用 globals() 确保 exec 定义可见）:
+        py (exec(open('network_cli.py').read(), globals()), register(net))[1]
+
+    之后即可使用: send / msg / trace / ls / resources
     """
+    print("[NETWORK_CLI] 正在初始化...")
     init_resources()
     init_fs_topology([h.name for h in net.hosts])
     register_cli_commands()
-    print("[CLI] 文件系统已就绪: results/fs_topology/nodes/")
-    print("[CLI] 传输日志: results/runtime_transfer.json")
+    print("[NETWORK_CLI] 框架已就绪！命令: send, msg, trace, ls, resources")
+    print("[NETWORK_CLI] 文件系统: results/fs_topology/nodes/")
+    print("[NETWORK_CLI] 传输日志: results/runtime_transfer.json")
+
+
+print("[NETWORK_CLI] network_cli.py 已加载")
 
 
 if __name__ == "__main__":
