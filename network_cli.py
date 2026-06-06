@@ -46,15 +46,14 @@ OUTBOX = "outbox"
 
 # 预置示例文件列表（拓扑构建时写入各主机 outbox）
 PRESET_SENDER_FILES = {
+    "dorm1":   [("校园风景.jpg", "images/campus.jpg"), ("社团海报.png", "images/logo.png"), ("课程资料.zip", "zip/archive.zip")],
+    "dorm2":   [("课程资料.zip", "zip/archive.zip")],
     "office1": [("通知_2026.docx", "docs/notice.docx"), ("财务报告.xlsx", "docs/report.pdf")],
     "teach1":  [("课件_计算机网络.pdf", "docs/ebook.pdf"), ("实验指导.docx", "docs/notice.docx")],
-    "library": [],   # 预留，会从 resources/ 中获取
-    "dorm1":   [("校园风景.jpg", "images/campus.jpg"), ("社团海报.png", "images/logo.png")],
-    "dorm2":   [("课程资料.zip", "zip/archive.zip")],
-    "finance1": [("财务通知.docx", "docs/notice.docx")],
-    "hr1":     [("人事档案.pdf", "docs/report.pdf")],
+    "finance1":[("财务数据报表.xlsx", "docs/report.pdf"), ("预算审批.docx", "docs/notice.docx")],
+    "hr1":     [("员工档案.pdf", "docs/report.pdf")],
     "home_pc": [("VPN测试文件.pdf", "docs/ebook.pdf")],
-    "campusb_h1": [("校区B课件.pdf", "docs/ebook.pdf")],
+    "campusb_h1": [("校区B课件.pdf", "docs/ebook.pdf"), ("AI_book.zip", "zip/archive.zip")],
 }
 
 # ============================================================
