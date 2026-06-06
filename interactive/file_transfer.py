@@ -21,10 +21,19 @@ def _md5(filepath):
 
 
 def _get_project_root():
+    """向上搜索直到找到 main.py。"""
+    import os as _os
     try:
-        return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        p = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
     except NameError:
-        return os.getcwd()
+        p = _os.getcwd()
+    for _ in range(10):
+        if _os.path.exists(_os.path.join(p, "main.py")):
+            return p
+        parent = _os.path.dirname(p)
+        if parent == p: break
+        p = parent
+    return _os.getcwd()
 
 
 def transfer_file(src_name, dst_name, filename):

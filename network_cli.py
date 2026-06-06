@@ -33,11 +33,22 @@ from datetime import datetime
 # 路径配置（__file__ 在 py exec() 中不可用，回退到 cwd）
 # ============================================================
 
-try:
-    PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-except NameError:
-    PROJECT_ROOT = os.getcwd()
+def _find_project_root():
+    """向上搜索直到找到 main.py，确定项目根目录。"""
+    import os as _os
+    try:
+        p = _os.path.dirname(_os.path.abspath(__file__))
+    except NameError:
+        p = _os.getcwd()
+    for _ in range(10):
+        if _os.path.exists(_os.path.join(p, "main.py")):
+            return p
+        parent = _os.path.dirname(p)
+        if parent == p: break
+        p = parent
+    return _os.getcwd()
 
+PROJECT_ROOT = _find_project_root()
 RESOURCES_DIR = os.path.join(PROJECT_ROOT, "resources")
 FS_TOPOLOGY_DIR = os.path.join(PROJECT_ROOT, "fs_topology")
 RUNTIME_LOG = os.path.join(PROJECT_ROOT, "fs_topology", "runtime_transfer.json")
@@ -45,15 +56,33 @@ INBOX = "inbox"
 OUTBOX = "outbox"
 
 # 预置示例文件列表（拓扑构建时写入各主机 outbox）
-PRESET_SENDER_FILES = {
-    "dorm1":   [("校园风景.jpg", "images/campus.jpg"), ("社团海报.png", "images/logo.png"), ("课程资料.zip", "zip/archive.zip")],
-    "dorm2":   [("课程资料.zip", "zip/archive.zip")],
-    "office1": [("通知_2026.docx", "docs/notice.docx"), ("财务报告.xlsx", "docs/report.pdf")],
-    "teach1":  [("课件_计算机网络.pdf", "docs/ebook.pdf"), ("实验指导.docx", "docs/notice.docx")],
-    "finance1":[("财务数据报表.xlsx", "docs/report.pdf"), ("预算审批.docx", "docs/notice.docx")],
-    "hr1":     [("员工档案.pdf", "docs/report.pdf")],
-    "home_pc": [("VPN测试文件.pdf", "docs/ebook.pdf")],
-    "campusb_h1": [("校区B课件.pdf", "docs/ebook.pdf"), ("AI_book.zip", "zip/archive.zip")],
+FILE_DISTRIBUTION = {
+    "dorm1":      ["campus.jpg", "logo.png", "archive.zip"],
+    "dorm2":      ["archive.zip"],
+    "teach1":     ["ebook.pdf", "notice.docx"],
+    "teach2":     [],
+    "lib1":       [],
+    "lib2":       [],
+    "office1":    ["notice.docx", "report.pdf"],
+    "office2":    [],
+    "finance1":   ["report.pdf", "notice.docx"],
+    "finance2":   [],
+    "hr1":        ["report.pdf"],
+    "hr2":        [],
+    "home_pc":    ["ebook.pdf"],
+    "campusb_h1": ["ebook.pdf", "archive.zip"],
+    "server1":    [],
+    "server2":    [],
+}
+
+# 文件名 → resources/ 子目录映射
+_FILE_SOURCES = {
+    "campus.jpg":   "images",
+    "logo.png":     "images",
+    "notice.docx":  "docs",
+    "report.pdf":   "docs",
+    "ebook.pdf":    "docs",
+    "archive.zip":  "zip",
 }
 
 # ============================================================
@@ -111,72 +140,73 @@ def _resolve_path(src, dst):
 
 def init_fs_topology(host_list):
     """
-    初始化 fs_topology/ 目录结构，为每个主机创建 inbox/outbox。
-    预置发送方 outbox 中的示例文件（模拟校园网日常文件）。
+    初始化 fs_topology/ — 每次启动先删除旧结构再重建。
+    根据 FILE_DISTRIBUTION 从 resources/ 复制文件到各主机 files/ 目录。
     """
-    os.makedirs(FS_TOPOLOGY_DIR, exist_ok=True)
+    # 1. 删除旧 fs_topology（保证实验可重复）
+    if os.path.exists(FS_TOPOLOGY_DIR):
+        shutil.rmtree(FS_TOPOLOGY_DIR)
 
     nodes_dir = os.path.join(FS_TOPOLOGY_DIR, "nodes")
-    os.makedirs(nodes_dir, exist_ok=True)
+    os.makedirs(nodes_dir)
 
     created = 0
-    populated = 0
+    copied = 0
+    missing = []
     for host_name in host_list:
         host_dir = os.path.join(nodes_dir, host_name)
-        os.makedirs(os.path.join(host_dir, INBOX), exist_ok=True)
-        os.makedirs(os.path.join(host_dir, OUTBOX), exist_ok=True)
+        files_dir = os.path.join(host_dir, "files")
+        os.makedirs(files_dir)
         created += 1
 
-        # 预置发送方文件（模拟校园网用户已有待发送的文件）
-        # 只匹配实际存在于 host_list 中的主机名
-        for display_name, resource_path in PRESET_SENDER_FILES.get(host_name, []):
-            res_file = os.path.join(RESOURCES_DIR, resource_path)
-            if os.path.exists(res_file):
-                dst_file = os.path.join(host_dir, OUTBOX, display_name)
-                if not os.path.exists(dst_file):
-                    shutil.copy2(res_file, dst_file)
-                    populated += 1
+        # 2. 根据 FILE_DISTRIBUTION 从 resources/ 复制文件
+        for filename in FILE_DISTRIBUTION.get(host_name, []):
+            subdir = _FILE_SOURCES.get(filename, "")
+            src_path = os.path.join(RESOURCES_DIR, subdir, filename) if subdir else os.path.join(RESOURCES_DIR, filename)
+            if os.path.exists(src_path):
+                dst_path = os.path.join(files_dir, filename)
+                shutil.copy2(src_path, dst_path)
+                copied += 1
+            else:
+                missing.append(f"{host_name}/{filename}")
 
-    # 初始化 JSON 日志
-    if not os.path.exists(RUNTIME_LOG):
-        with open(RUNTIME_LOG, "w") as f:
-            json.dump({"transfers": [], "_generated": str(datetime.now())}, f, indent=2)
+    # 3. 初始化日志
+    with open(RUNTIME_LOG, "w") as f:
+        json.dump({"transfers": [], "_generated": str(datetime.now())}, f, indent=2)
 
-    print(f"[FS] fs_topology/ 已创建 ({created} 个节点, {populated} 个预置文件)")
+    msg = f"[FS] fs_topology/ 已重建 ({created} 个节点, {copied} 个文件)"
+    if missing:
+        msg += f", {len(missing)} 个缺失 (需补充 resources/)"
+    print(msg)
+    if missing:
+        print(f"[FS] 缺失文件: {', '.join(missing[:5])}...")
     return True
 
 
 def init_resources():
-    """初始化资源目录结构。"""
-    dirs = [
-        os.path.join(RESOURCES_DIR, "images"),
-        os.path.join(RESOURCES_DIR, "docs"),
-        os.path.join(RESOURCES_DIR, "zip"),
-    ]
+    """初始化资源目录 + 生成占位示例文件（后端生成，用户可替换真文件）。"""
+    dirs = ["images", "docs", "zip", "misc"]
     for d in dirs:
-        os.makedirs(d, exist_ok=True)
+        os.makedirs(os.path.join(RESOURCES_DIR, d), exist_ok=True)
 
-    # 创建示例资源文件
-    _create_sample_resources()
-    return True
-
-
-def _create_sample_resources():
-    """创建示例资源文件（仅在文件不存在时）。"""
     samples = {
-        "images/campus.jpg": b"\xFF\xD8\xFF\xE0" + b"\x00" * 1024,   # 最小 JPEG
-        "images/logo.png":   b"\x89PNG\r\n\x1A\n" + b"\x00" * 512,   # 最小 PNG
-        "docs/notice.docx":  b"PK\x03\x04" + b"Campus Notice Document\x00" * 100,
-        "docs/report.pdf":   b"%PDF-1.4" + b"Campus Network Report\x00" * 100,
-        "docs/ebook.pdf":    b"%PDF-1.4" + b"E-Book Content\x00" * 200,
-        "zip/archive.zip":   b"PK\x03\x04" + b"Archive Data\x00" * 500,
+        "images/campus.jpg":  b"\xFF\xD8\xFF\xE0" + b"\x00" * 2048,
+        "images/logo.png":    b"\x89PNG\r\n\x1A\n" + b"\x00" * 1024,
+        "docs/notice.docx":   b"PK\x03\x04" + b"Notice_Document_Placeholder\x00" * 50,
+        "docs/report.pdf":    b"%PDF-1.4" + b"Report_Placeholder\x00" * 100,
+        "docs/ebook.pdf":     b"%PDF-1.4" + b"EBook_Placeholder\x00" * 200,
+        "zip/archive.zip":    b"PK\x03\x04" + b"Archive_Placeholder\x00" * 500,
+        "misc/vpn_test.pdf":  b"%PDF-1.4" + b"VPN_Test_File\x00" * 100,
     }
+    created = 0
     for rel_path, content in samples.items():
         full_path = os.path.join(RESOURCES_DIR, rel_path)
         if not os.path.exists(full_path):
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
             with open(full_path, "wb") as f:
                 f.write(content)
+            created += 1
+    return created
 
 
 def list_resources():
@@ -338,11 +368,11 @@ def cmd_msg(src_host, dst_host, message):
     path = _resolve_path(src_host.name, dst_host.name)
     print(f"[ROUTE] 路径: {' → '.join(path)}")
 
-    # 写入接收方 inbox 为 .txt 文件（可视化传输结果）
-    dst_inbox = os.path.join(FS_TOPOLOGY_DIR, "nodes", dst_host.name, INBOX)
-    os.makedirs(dst_inbox, exist_ok=True)
+    # 写入接收方 files/ 为 .txt 文件
+    dst_files = os.path.join(FS_TOPOLOGY_DIR, "nodes", dst_host.name, "files")
+    os.makedirs(dst_files, exist_ok=True)
     ts = datetime.now().strftime("%H%M%S")
-    msg_file = os.path.join(dst_inbox, f"msg_{src_host.name}_{ts}.txt")
+    msg_file = os.path.join(dst_files, f"msg_{src_host.name}_{ts}.txt")
     content = f"From: {src_host.name}\nTo: {dst_host.name}\nTime: {datetime.now()}\n---\n{message}\n"
     with open(msg_file, "w", encoding="utf-8") as f:
         f.write(content)
@@ -353,31 +383,24 @@ def cmd_msg(src_host, dst_host, message):
     src_host.cmd(f"echo '{message}' | nc -w 3 {_get_ip(dst_host)} 9998")
     time.sleep(0.5)
 
-    print(f"[MSG] 已写入: fs_topology/nodes/{dst_host.name}/{INBOX}/{os.path.basename(msg_file)}")
+    print(f"[MSG] 已写入: fs_topology/nodes/{dst_host.name}/files/{os.path.basename(msg_file)}")
 
 
 def cmd_ls(host):
-    """查看主机的 inbox/outbox 内容。"""
+    """查看主机的 files/ 目录内容。"""
     node_dir = os.path.join(FS_TOPOLOGY_DIR, "nodes", host.name)
-    inbox = os.path.join(node_dir, INBOX)
-    outbox = os.path.join(node_dir, OUTBOX)
+    files_dir = os.path.join(node_dir, "files")
 
-    print(f"\n  [{host.name}]")
-    print(f"  inbox/")
-    if os.path.exists(inbox):
-        files = os.listdir(inbox)
-        for f in sorted(files):
-            size = os.path.getsize(os.path.join(inbox, f))
-            print(f"    {f} ({size} bytes)")
-        if not files:
-            print(f"    (empty)")
-    print(f"  outbox/")
-    if os.path.exists(outbox):
-        files = os.listdir(outbox)
-        for f in sorted(files):
-            size = os.path.getsize(os.path.join(outbox, f))
-            print(f"    {f} ({size} bytes)")
-        if not files:
+    print(f"\n  [{host.name}] files/")
+    if os.path.exists(files_dir):
+        flist = os.listdir(files_dir)
+        if flist:
+            for f in sorted(flist):
+                fp = os.path.join(files_dir, f)
+                size = os.path.getsize(fp)
+                md5 = _md5_file(fp)[:8] if os.path.isfile(fp) else ""
+                print(f"    {f:<30s} {size:>8d} B  MD5:{md5}")
+        else:
             print(f"    (empty)")
 
 
@@ -476,48 +499,49 @@ def register_cli_commands():
 
     def do_send(self, line):
         """send <src_host> <dst_host> <filename> — 主机间文件传输"""
-        args = line.strip().split()
-        if len(args) < 3:
-            print("用法: send <src_host> <dst_host> <filename>")
-            print("示例: send dorm1 dorm2 campus.jpg")
-            return
-        src, dst, filename = args[0], args[1], args[2]
-        if not self.mn:
-            print("[ERROR] Mininet 网络不可用")
-            return
-        src_node = self.mn.get(src)
-        dst_node = self.mn.get(dst)
-        if not src_node or not dst_node:
-            print(f"[ERROR] 主机不存在: {src if not src_node else dst}")
-            return
-        cmd_send(self.mn, src, dst, filename)
+        try:
+            args = line.strip().split()
+            if len(args) < 3:
+                print("用法: send <src_host> <dst_host> <filename>")
+                return
+            src, dst, filename = args[0].strip("<>"), args[1].strip("<>"), args[2].strip("<>")
+            if not self.mn:
+                print("[ERROR] Mininet 网络不可用")
+                return
+            cmd_send(self.mn, src, dst, filename)
+        except Exception as e:
+            print(f"[ERROR] send 命令失败: {e}")
 
     def do_msg(self, line):
         """msg <src_host> <dst_host> <message> — 文本消息通信"""
-        parts = line.strip().split(maxsplit=2)
-        if len(parts) < 3:
-            print("用法: msg <src_host> <dst_host> <message>")
-            print("示例: msg office1 dorm1 \"hello\"")
-            return
-        src, dst, msg = parts[0], parts[1], parts[2].strip('"\'')
-        if not self.mn:
-            print("[ERROR] Mininet 网络不可用")
-            return
-        src_node = self.mn.get(src)
-        dst_node = self.mn.get(dst)
-        if not src_node or not dst_node:
-            print(f"[ERROR] 主机不存在: {src if not src_node else dst}")
-            return
-        cmd_msg(src_node, dst_node, msg)
+        try:
+            parts = line.strip().split(maxsplit=2)
+            if len(parts) < 3:
+                print("用法: msg <src_host> <dst_host> <message>")
+                return
+            src, dst, msg = parts[0].strip("<>"), parts[1].strip("<>"), parts[2].strip('"\'')
+            if not self.mn:
+                print("[ERROR] Mininet 网络不可用")
+                return
+            src_node = self.mn.get(src)
+            dst_node = self.mn.get(dst)
+            if not src_node or not dst_node:
+                print(f"[ERROR] 主机不存在: {src if not src_node else dst}")
+                return
+            cmd_msg(src_node, dst_node, msg)
+        except Exception as e:
+            print(f"[ERROR] msg 命令失败: {e} (CLI 仍然可用)")
 
     def do_trace(self, line):
         """trace <src_host> <dst_host> — 路径追踪，显示完整路由+ACL判定"""
-        args = line.strip().split()
-        if len(args) < 2:
-            print("用法: trace <src_host> <dst_host>")
-            print("示例: trace dorm1 office1")
-            return
-        cmd_trace(args[0], args[1])
+        try:
+            args = line.strip().split()
+            if len(args) < 2:
+                print("用法: trace <src_host> <dst_host>")
+                return
+            cmd_trace(args[0].strip("<>"), args[1].strip("<>"))
+        except Exception as e:
+            print(f"[ERROR] trace 命令失败: {e} (CLI 仍然可用)")
 
     def do_ls_host(self, line):
         """ls <host_name> — 查看指定主机的 inbox/outbox 内容"""
@@ -526,15 +550,18 @@ def register_cli_commands():
             print("用法: ls <host_name>")
             print("示例: ls dorm1")
             return
-        host_name = args[0]
-        if self.mn:
-            host = self.mn.get(host_name)
-            if host:
-                cmd_ls(host)
+        host_name = args[0].strip("<>")  # 容错：去掉用户误输入的尖括号
+        try:
+            if self.mn:
+                host = self.mn.get(host_name)
+                if host:
+                    cmd_ls(host)
+                else:
+                    print(f"[ERROR] 主机不存在: {host_name}")
             else:
-                print(f"[ERROR] 主机不存在: {host_name}")
-        else:
-            print("[ERROR] Mininet 网络不可用")
+                print("[ERROR] Mininet 网络不可用")
+        except Exception as e:
+            print(f"[ERROR] ls 命令执行失败: {e} (不会退出 CLI)")
 
     def do_resources(self, line):
         """resources — 列出可发送的资源文件"""

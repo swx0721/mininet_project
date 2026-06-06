@@ -190,9 +190,10 @@ def mode_model(model_name, args, config=None):
         info(f"[DEPLOY] 负载均衡已启用 (Round Robin)\n")
 
     if model_name in ("security", "final"):
-        from security.acl import apply_stateful_firewall, apply_acl_policies, apply_default_drop
+        from security.acl import clear_all_rules, apply_stateful_firewall, apply_acl_policies, apply_default_drop
         from security.intrusion import apply_intrusion_detection
         from security.audit_db import init_db
+        clear_all_rules(r1)          # 清除 Mininet 默认 NAT 规则（否则 ACCEPT 优先于 DROP）
         apply_stateful_firewall(r1)
         apply_acl_policies(r1)
         apply_default_drop(r1)
