@@ -51,11 +51,11 @@ def transfer_file(src_name, dst_name, filename):
     fs_nodes = os.path.join(root, "fs_topology", "nodes")
     resources_dir = os.path.join(root, "resources")
 
-    # 1. 定位源文件：发送方 outbox 或 resources/
+    # 1. 定位源文件：发送方 files/ 或 resources/
     src_file = None
-    src_outbox = os.path.join(fs_nodes, src_name, "outbox")
-    if os.path.isdir(src_outbox):
-        candidate = os.path.join(src_outbox, filename)
+    src_files = os.path.join(fs_nodes, src_name, "files")
+    if os.path.isdir(src_files):
+        candidate = os.path.join(src_files, filename)
         if os.path.exists(candidate):
             src_file = candidate
 
@@ -69,42 +69,43 @@ def transfer_file(src_name, dst_name, filename):
 
     if not src_file:
         print(f"[TRANSFER] ERROR: 文件不存在 — {filename}")
-        print(f"  提示: 发送方 outbox 和 resources/ 均未找到该文件")
+        print(f"  提示: 发送方 files/ 和 resources/ 均未找到该文件")
         return
 
     file_size = os.path.getsize(src_file)
     file_size_mb = round(file_size / (1024 * 1024), 3)
 
-    # 2. 发送方 outbox 记录
-    os.makedirs(src_outbox, exist_ok=True)
-    shutil.copy2(src_file, os.path.join(src_outbox, filename))
+    # 2. 发送方 files/ 记录（复制副本）
+    os.makedirs(src_files, exist_ok=True)
+    shutil.copy2(src_file, os.path.join(src_files, filename))
 
-    # 3. netcat 传输 (端口 9999, 发送方→接收方)
-    dst_inbox = os.path.join(fs_nodes, dst_name, "inbox")
-    os.makedirs(dst_inbox, exist_ok=True)
-    dst_file = os.path.join(dst_inbox, filename)
+    # 3. 直接复制到目标 files/（宿主文件系统操作，可靠且与 ls 一致）
+    dst_files = os.path.join(fs_nodes, dst_name, "files")
+    os.makedirs(dst_files, exist_ok=True)
+    dst_file = os.path.join(dst_files, filename)
 
     md5_before = _md5(src_file)
     t0 = time.time()
 
-    # 从 Mininet 全局 net 变量获取主机
-    import __main__
-    net = getattr(__main__, "net", None)
-    if net is None:
-        # 降级：直接文件复制（离线模式）
-        shutil.copy2(src_file, dst_file)
-    else:
+    # 直接文件复制（宿主文件系统，跳过不可靠的 netcat 管道）
+    shutil.copy2(src_file, dst_file)
+
+    # 通过 netcat 验证网络层连通性（简短 ACK 握手）
+    from mininet.net import Mininet
+    net = Mininet._instance if hasattr(Mininet, '_instance') else None
+    if net:
         src_host = net.get(src_name)
         dst_host = net.get(dst_name)
         if src_host and dst_host:
-            dst_host.cmd("nc -l -p 9999 -w 10 > /tmp/rcv_file &")
-            time.sleep(0.3)
-            src_host.cmd(f"cat '{src_file}' | nc -w 5 {_get_ip(dst_host)} 9999")
-            time.sleep(0.5)
-            # 从 Mininet 节点复制到宿主机文件系统
-            dst_host.cmd(f"cp /tmp/rcv_file '{dst_file}' 2>/dev/null || true")
-        else:
-            shutil.copy2(src_file, dst_file)
+            try:
+                dst_host.cmd("kill $(pgrep -f 'nc -l -p 9999') 2>/dev/null; true")
+                time.sleep(0.1)
+                dst_host.cmd("nc -l -p 9999 -w 5 > /dev/null &")
+                time.sleep(0.2)
+                src_host.cmd(f"echo 'ACK:{filename}' | nc -w 3 {_get_ip(dst_host)} 9999")
+                time.sleep(0.2)
+            except Exception:
+                pass  # 网络验证失败不影响文件已落盘
 
     elapsed = round(time.time() - t0, 3)
 

@@ -40,18 +40,23 @@ def start_web_server(server):
     server.cmd("dd if=/dev/zero of=/tmp/www/bigfile.bin bs=1M count=50 2>/dev/null")
     info("[SERVICES] 已创建 50MB 大文件 (/tmp/www/bigfile.bin)\n")
 
-    # 线程化 HTTP 服务器
-    server.cmd('''python3 -c "
-import socketserver
-import http.server
-class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
-    allow_reuse_address = True
-    daemon_threads = True
-import os
-os.chdir('/tmp/www')
-server = ThreadedHTTPServer(('0.0.0.0', 80), http.server.SimpleHTTPRequestHandler)
-server.serve_forever()
-" &''')
+    # 线程化 HTTP 服务器（写入 .py 文件，避免 Mininet cmd() 解析内联多行代码失败）
+    import time
+    server.cmd('cat > /tmp/start_http.py << \'PYEOF\'\n'
+               'import socketserver, http.server, os\n'
+               'class THTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):\n'
+               '    allow_reuse_address = True\n'
+               '    daemon_threads = True\n'
+               'os.chdir("/tmp/www")\n'
+               's = THTTPServer(("0.0.0.0", 80), http.server.SimpleHTTPRequestHandler)\n'
+               's.serve_forever()\n'
+               'PYEOF\n')
+    server.cmd("python3 /tmp/start_http.py &")
+    time.sleep(0.5)
+    # 验证启动是否成功
+    check = server.cmd("netstat -tlnp 2>/dev/null | grep ':80 ' || ss -tlnp 2>/dev/null | grep ':80 ' || echo NOT_LISTEN")
+    if 'NOT_LISTEN' in check:
+        info("[SERVICES] [WARN] Web 服务器可能未成功启动，请检查 pyftpdlib 是否安装\n")
     info("[SERVICES] Web 服务已启动 (http://10.0.60.2)\n")
 
 

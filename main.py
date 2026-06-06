@@ -190,11 +190,14 @@ def mode_model(model_name, args, config=None):
         info(f"[DEPLOY] 负载均衡已启用 (Round Robin)\n")
 
     if model_name in ("security", "final"):
-        from security.acl import clear_all_rules, apply_stateful_firewall, apply_acl_policies, apply_default_drop
+        from security.acl import (clear_all_rules, apply_stateful_firewall,
+                                 apply_acl_policies, apply_default_drop,
+                                 apply_external_isolation)
         from security.intrusion import apply_intrusion_detection
         from security.audit_db import init_db
         clear_all_rules(r1)          # 清除 Mininet 默认 NAT 规则（否则 ACCEPT 优先于 DROP）
         apply_stateful_firewall(r1)
+        apply_external_isolation(r1) # 校外 home_pc 默认完全隔离（VPN 关闭时无法访问任何校内主机）
         apply_acl_policies(r1)
         apply_default_drop(r1)
         apply_intrusion_detection(r1)
@@ -202,9 +205,10 @@ def mode_model(model_name, args, config=None):
         info("[DEPLOY] 安全策略已部署 (ACL + IDS + SQLite)\n")
 
     # 初始化交互式文件系统（拓扑文件系统，与 Mininet 节点同构）
+    # force_rebuild=True: main.py 启动时强制重建，保证实验可重复
     try:
         from network_cli import init_fs_topology
-        init_fs_topology([h.name for h in net.hosts])
+        init_fs_topology([h.name for h in net.hosts], force_rebuild=True)
         info("[DEPLOY] fs_topology/ 文件系统已初始化\n")
     except ImportError:
         pass

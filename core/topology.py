@@ -41,6 +41,7 @@ SUBNET_CONFIG = {
     "hr":      {"net": "10.0.35.64/26", "gw": "10.0.35.65"},
     "server":  {"net": "10.0.60.0/28", "gw": "10.0.60.1"},
     "server2": {"net": "10.0.60.16/28", "gw": "10.0.60.17"},
+    "home":    {"net": "192.168.100.0/24", "gw": "192.168.100.1"},
 }
 
 HOST_DEFINITIONS = [
@@ -58,6 +59,7 @@ HOST_DEFINITIONS = [
     ("hr2",     "10.0.35.67/26", "hr"),
     ("server1", "10.0.60.2/28", "server"),    # s_server1 → r1-eth5
     ("server2", "10.0.60.18/28", "server2"),  # s_server2 → r1-eth6（独立子网）
+    ("home_pc", "192.168.100.10/24", "home"), # 校外家庭用户 → r1-eth8
 ]
 
 # 上行链路配置：各区域汇聚层交换机（或单交换机） → 核心路由器
@@ -71,6 +73,7 @@ UPLINK_CONFIG = [
     ("office",   "r1-eth3", 100, "5ms"),
     ("finance",  "r1-eth4", 100, "5ms"),
     ("hr",       "r1-eth7", 100, "5ms"),
+    ("home",     "r1-eth8", 20,  "10ms"),  # 校外家庭网络（低带宽高延迟模拟公网）
 ]
 
 # 接入层→汇聚层二级拓扑区域
@@ -85,6 +88,7 @@ ROUTER_IPS = {
     "r1-eth7": "10.0.35.65/26",    # 人事处上行
     "r1-eth5": "10.0.60.1/28",    # 服务器1 独立链路（s_server1）
     "r1-eth6": "10.0.60.17/28",   # 服务器2 独立链路（s_server2，对称）
+    "r1-eth8": "192.168.100.1/24", # 校外家庭网络上行
 }
 
 DEFAULT_LINK_PARAMS = {
@@ -96,6 +100,7 @@ DEFAULT_LINK_PARAMS = {
     "hr":      {"bw": 100, "delay": "5ms"},
     "server":  {"bw": 100, "delay": "1ms"},   # 服务器1 独立链路
     "server2": {"bw": 100, "delay": "1ms"},   # 服务器2 独立链路（对称）
+    "home":    {"bw": 20,  "delay": "10ms"},  # 校外家庭网络（模拟公网低带宽高延迟）
 }
 
 # ==================== 全局常量 ====================
@@ -163,6 +168,9 @@ def build_topology(with_cli=True, access_bw=None, access_delay=None,
     # 服务器双交换机（对称结构）
     switches["s_server1"] = net.addSwitch("s_server1", dpid="0000000000000008")
     switches["s_server2"] = net.addSwitch("s_server2", dpid="0000000000000009")
+
+    # 校外家庭网络交换机
+    switches["home"] = net.addSwitch("s_home", dpid="000000000000000A")
 
     # ---------- 创建主机 ----------
     hosts = {}

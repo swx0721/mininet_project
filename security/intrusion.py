@@ -78,14 +78,16 @@ def apply_icmp_flood_protection(r1):
     """
     ICMP Flood 防护。
     限制 ICMP echo-request 速率 1/s，burst 5。
-    规则插入 FORWARD 链首，优先于 ESTABLISHED 等放行规则。
+    规则追加至 FORWARD 链尾部（在 ACL 黑名单之后，默认 DROP 策略之前）。
+    逆序追加确保: limit ACCEPT 先于无条件 DROP 被匹配。
     """
     info("[INTRUSION] 应用 ICMP Flood 防护...\n")
-    # 逆序插入，最终顺序: limit ACCEPT → DROP
-    r1.cmd("iptables -I FORWARD 1 -p icmp --icmp-type echo-request -j DROP")
-    r1.cmd("iptables -I FORWARD 1 -p icmp --icmp-type echo-request "
+    # 逆序追加: 先追加 DROP(无条件丢弃超额)，再追加 limit ACCEPT(限速内放行)
+    # 最终匹配顺序: 限速内 → ACCEPT，超额 → 下一规则(DROP)，超额ICMP被丢弃
+    r1.cmd("iptables -A FORWARD -p icmp --icmp-type echo-request -j DROP")
+    r1.cmd("iptables -A FORWARD -p icmp --icmp-type echo-request "
            "-m limit --limit 1/s --limit-burst 5 -j ACCEPT")
-    info("[INTRUSION] ICMP 限速已启用 (1/s, burst=5, 链首优先级)\n")
+    info("[INTRUSION] ICMP 限速已启用 (1/s, burst=5, 链尾追加，ACL优先)\n")
 
 
 # ==================== TCP SYN Flood 防护 ====================
@@ -94,16 +96,18 @@ def apply_syn_flood_protection(r1):
     """
     TCP SYN Flood 防护。
     限制 SYN 包速率 50/s，burst 100，超出部分 LOG + DROP。
-    规则插入 FORWARD 链首，优先于任何放行规则。
+    规则追加至 FORWARD 链尾部（在 ACL 黑名单之后，默认 DROP 策略之前）。
+    逆序追加确保: limit ACCEPT 先于 LOG 和 DROP 被匹配。
     """
     info("[INTRUSION] 应用 TCP SYN Flood 防护...\n")
-    # 逆序插入，最终顺序: limit ACCEPT → LOG → DROP
-    r1.cmd("iptables -I FORWARD 1 -p tcp --syn -j DROP")
-    r1.cmd('iptables -I FORWARD 1 -p tcp --syn -j LOG '
+    # 逆序追加: DROP(无条件丢弃) → LOG(记录) → limit ACCEPT(限速内放行)
+    # 最终匹配顺序: 限速内 → ACCEPT，超额 → LOG → DROP
+    r1.cmd("iptables -A FORWARD -p tcp --syn -j DROP")
+    r1.cmd('iptables -A FORWARD -p tcp --syn -j LOG '
            '--log-prefix "SYN_FLOOD: " --log-level 4')
-    r1.cmd("iptables -I FORWARD 1 -p tcp --syn "
+    r1.cmd("iptables -A FORWARD -p tcp --syn "
            "-m limit --limit 50/s --limit-burst 100 -j ACCEPT")
-    info("[INTRUSION] TCP SYN Flood 防护已启用 (50/s, burst=100, 链首优先级)\n")
+    info("[INTRUSION] TCP SYN Flood 防护已启用 (50/s, burst=100, 链尾追加，ACL优先)\n")
 
 
 # ==================== 一键应用 ====================

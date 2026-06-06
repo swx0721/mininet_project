@@ -4,6 +4,8 @@ services/ftp.py — FTP 服务器
 在服务器节点上启动 FTP 服务（端口 21），使用 pyftpdlib。
 """
 
+import time
+
 from mininet.log import info
 
 
@@ -31,5 +33,10 @@ def start_ftp_server(server):
     server.cmd("mkdir -p /tmp/ftp/notices /tmp/ftp/software")
     server.cmd('echo "校园网将于本周六凌晨2:00-4:00进行维护升级。" > /tmp/ftp/notices/maintenance.txt')
 
-    server.cmd("cd /tmp/ftp && python3 -m pyftpdlib -p 21 -w &")
+    server.cmd("cd /tmp/ftp && python3 -m pyftpdlib -p 21 -w > /tmp/ftp.log 2>&1 &")
+    time.sleep(0.5)
+    # 验证启动是否成功
+    check = server.cmd("netstat -tlnp 2>/dev/null | grep ':21 ' || ss -tlnp 2>/dev/null | grep ':21 ' || echo NOT_LISTEN")
+    if 'NOT_LISTEN' in check:
+        info("[SERVICES] [WARN] FTP 服务器可能未启动，请确认 pyftpdlib 已安装 (pip install pyftpdlib)\n")
     info("[SERVICES] FTP 服务已启动 (ftp://10.0.60.2, 匿名可写)\n")
