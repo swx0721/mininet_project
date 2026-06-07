@@ -74,7 +74,15 @@ def apply_acl_policies(r1):
 
     info("[ACL] ACL 规则已全部生效\n")
 
-    # --- 放通服务器区流量（所有区域均可访问 server1/server2）---
+
+def apply_server_accept(r1):
+    """
+    放通所有区域到服务器区的流量。
+
+    重要：此函数应在入侵检测（ICMP/SYN Flood 防护）规则之后调用，
+    确保 Flood 防护能覆盖到发往服务器的流量。
+    如果在此函数之前调用，服务器 ACCEPT 规则会 bypass Flood 防护。
+    """
     info("[ACL] 放通服务器区访问...\n")
     # server1: 10.0.60.0/28, server2: 10.0.60.16/28
     r1.cmd("iptables -A FORWARD -d 10.0.60.0/28 -j ACCEPT")

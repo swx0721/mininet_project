@@ -27,7 +27,8 @@ from core.server_cluster import get_server_hosts
 from services.web import start_web_server
 from services.iperf import start_iperf_server
 from security.acl import (
-    apply_stateful_firewall, apply_acl_policies, apply_default_accept
+    apply_stateful_firewall, apply_acl_policies, apply_default_accept,
+    apply_server_accept,
 )
 from security.intrusion import (
     apply_intrusion_detection, detect_port_scan, reset_scan_tracker
@@ -57,6 +58,7 @@ def setup_security_network():
     apply_stateful_firewall(r1)
     apply_acl_policies(r1)
     apply_intrusion_detection(r1)
+    apply_server_accept(r1)   # Flood 防护之后才放通服务器区（避免 bypass）
     apply_htb_policy(r1)
     init_db(r1)
 

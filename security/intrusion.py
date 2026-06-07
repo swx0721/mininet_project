@@ -78,16 +78,30 @@ def apply_icmp_flood_protection(r1):
     """
     ICMP Flood 防护。
     限制 ICMP echo-request 速率 1/s，burst 5。
-    规则追加至 FORWARD 链尾部（在 ACL 黑名单之后，默认 DROP 策略之前）。
-    逆序追加确保: limit ACCEPT 先于无条件 DROP 被匹配。
+
+    修复（2026-06-07 最终版）：
+    conntrack 会把 ICMP echo request/reply 当作"连接"追踪，
+    后续 ICMP 包被标记为 ESTABLISHED。若 Flood 防护规则在 ESTABLISHED
+    规则之后（位置 2/3），ICMP 包直接被位置 1 的 ESTABLISHED ACCEPT，
+    永远匹配不到 Flood 规则 → 40/40。
+
+    本修复将 ICMP 规则插入位置 1（ESTABLISHED 之前），
+    强制所有 ICMP echo-request 先经过限速检查。
     """
     info("[INTRUSION] 应用 ICMP Flood 防护...\n")
-    # 逆序追加: 先追加 DROP(无条件丢弃超额)，再追加 limit ACCEPT(限速内放行)
-    # 最终匹配顺序: 限速内 → ACCEPT，超额 → 下一规则(DROP)，超额ICMP被丢弃
-    r1.cmd("iptables -A FORWARD -p icmp --icmp-type echo-request -j DROP")
-    r1.cmd("iptables -A FORWARD -p icmp --icmp-type echo-request "
+    # 插入顺序（逆序）:
+    #   1. 先插入 DROP 到位置 1
+    #   2. 再插入 limit ACCEPT 到位置 1（在 DROP 之前）
+    # 最终链位置:
+    #   1: ICMP limit ACCEPT（限速内放行）— 在 ESTABLISHED 之前！
+    #   2: ICMP DROP（超额丢弃）
+    #   3: ESTABLISHED,RELATED → ACCEPT（TCP/UDP 仍正常）
+    #   4~: 其他 ACL 规则
+    r1.cmd("iptables -I FORWARD 1 -p icmp --icmp-type echo-request -j DROP")
+    r1.cmd("iptables -I FORWARD 1 -p icmp --icmp-type echo-request "
            "-m limit --limit 1/s --limit-burst 5 -j ACCEPT")
-    info("[INTRUSION] ICMP 限速已启用 (1/s, burst=5, 链尾追加，ACL优先)\n")
+    info("[INTRUSION] ICMP 限速已启用 (1/s, burst=5, 插入 FORWARD 位置 1-2, "
+         "ESTABLISHED 之前)\n")
 
 
 # ==================== TCP SYN Flood 防护 ====================
@@ -96,18 +110,34 @@ def apply_syn_flood_protection(r1):
     """
     TCP SYN Flood 防护。
     限制 SYN 包速率 50/s，burst 100，超出部分 LOG + DROP。
-    规则追加至 FORWARD 链尾部（在 ACL 黑名单之后，默认 DROP 策略之前）。
-    逆序追加确保: limit ACCEPT 先于 LOG 和 DROP 被匹配。
+
+    修复（2026-06-07）：
+    旧实现用 -A 追加到 FORWARD 链尾，服务器 ACCEPT 规则在链中位置更靠前，
+    发往服务器的 SYN 包被服务器 ACCEPT 规则匹配，SYN Flood 防护被 bypass。
+
+    新实现：用 -I FORWARD 插入到位置 4/5/6（在 ICMP 防护 + ESTABLISHED 之后），
+    TCP SYN 包不会被 ESTABLISHED 规则匹配（SYN = NEW，非 ESTABLISHED），
+    确保 SYN 包先被 Flood 防护规则处理。
     """
     info("[INTRUSION] 应用 TCP SYN Flood 防护...\n")
-    # 逆序追加: DROP(无条件丢弃) → LOG(记录) → limit ACCEPT(限速内放行)
-    # 最终匹配顺序: 限速内 → ACCEPT，超额 → LOG → DROP
-    r1.cmd("iptables -A FORWARD -p tcp --syn -j DROP")
-    r1.cmd('iptables -A FORWARD -p tcp --syn -j LOG '
+    # 插入顺序（逆序）:
+    #   1. 先插入 DROP 到位置 4
+    #   2. 再插入 LOG 到位置 4
+    #   3. 最后插入 limit ACCEPT 到位置 4
+    # 最终链位置:
+    #   1: ICMP limit ACCEPT（限速内放行，ESTABLISHED 之前）
+    #   2: ICMP DROP（超额丢弃）
+    #   3: ESTABLISHED,RELATED → ACCEPT
+    #   4: SYN limit ACCEPT（限速内放行）
+    #   5: SYN LOG（记录超额）
+    #   6: SYN DROP（超额丢弃）
+    r1.cmd("iptables -I FORWARD 4 -p tcp --syn -j DROP")
+    r1.cmd('iptables -I FORWARD 4 -p tcp --syn -j LOG '
            '--log-prefix "SYN_FLOOD: " --log-level 4')
-    r1.cmd("iptables -A FORWARD -p tcp --syn "
+    r1.cmd("iptables -I FORWARD 4 -p tcp --syn "
            "-m limit --limit 50/s --limit-burst 100 -j ACCEPT")
-    info("[INTRUSION] TCP SYN Flood 防护已启用 (50/s, burst=100, 链尾追加，ACL优先)\n")
+    info("[INTRUSION] TCP SYN Flood 防护已启用 "
+          "(50/s, burst=100, 插入 FORWARD 位置 4-6)\n")
 
 
 # ==================== 一键应用 ====================
