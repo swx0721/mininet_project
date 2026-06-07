@@ -205,6 +205,16 @@ def mode_model(model_name, args, config=None):
         init_db(r1)
         info("[DEPLOY] 安全策略已部署 (ACL + IDS + SQLite)\n")
 
+    # 预初始化 VPN 服务端（WireGuard），使 enable_vpn() 可立即使用
+    try:
+        from security.vpn import get_or_create_vpn_manager
+        vpn_mgr = get_or_create_vpn_manager(net)
+        vpn_mgr.setup_server()
+        info("[DEPLOY] VPN 服务端已就绪 (WireGuard, 等待客户端连接)\n")
+    except Exception as e:
+        info(f"[DEPLOY] [WARN] VPN 服务端初始化失败: {e}\n"
+             "[DEPLOY]         enable_vpn() 将回退到 iptables 模拟模式\n")
+
     # 初始化交互式文件系统（拓扑文件系统，与 Mininet 节点同构）
     # force_rebuild=True: main.py 启动时强制重建，保证实验可重复
     try:

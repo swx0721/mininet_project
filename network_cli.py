@@ -250,11 +250,14 @@ def _md5_file(filepath):
 def _check_acl(src_name, dst_name, hosts, r1=None):
     """
     模拟 ACL 检查：判断源主机是否有权访问目标主机。
-    
+
     两层 ACL 体系：
       Layer 1 — 校外隔离：home_pc 默认完全隔离（VPN 关闭时禁止访问任何校内主机）
       Layer 2 — 校内 ACL：敏感区域（财务处/人事处）仅白名单可访问
-    
+
+    支持真实 VPN 模式：当 home_pc 已通过 WireGuard 连接时，
+    其身份切换为 VPN_USER，且拥有 10.0.80.x 虚拟 IP。
+
     返回:
         (allowed: bool, reason: str)
     """
@@ -262,7 +265,7 @@ def _check_acl(src_name, dst_name, hosts, r1=None):
     sensitive_hosts = {"finance1", "finance2", "hr1", "hr2"}
     authorized_sources = {"office1", "office2", "finance1", "finance2", "hr1", "hr2"}
     external_hosts = {"home_pc"}
-    
+
     # ────────────────────────────────────────────────
     # Layer 1 — 校外隔离（双重 ACL 第一层）
     # ────────────────────────────────────────────────
@@ -273,17 +276,20 @@ def _check_acl(src_name, dst_name, hosts, r1=None):
             current_identity = get_identity(src_name)
         except (ImportError, ModuleNotFoundError):
             current_identity = "HOME_USER"  # 默认：VPN 关闭
-        
+
         if current_identity == "VPN_USER":
             # VPN 已连接 → 进入 Layer 2 校内 ACL 判断
+            # 注意：VPN 用户即使在虚拟 IP 层面也不可访问敏感区域
             if dst_name in sensitive_hosts:
-                return False, "ACL_VPN_DENY (VPN用户禁止访问敏感区域)"
+                return False, ("ACL_VPN_DENY (VPN用户禁止访问敏感区域 — "
+                               "iptables 规则基于 wg0 接口拦截)")
             else:
-                return True, "ACL_VPN_ALLOW (VPN已连接，可访问普通区域)"
+                return True, ("ACL_VPN_ALLOW (VPN已连接, 虚拟IP访问普通区域 "
+                               "— 隧道: WireGuard)")
         else:
             # VPN 未连接 → 完全隔离，禁止访问任何校内主机
             return False, "ACL_EXTERNAL_BLOCK (校外主机未接入VPN，禁止访问校园网)"
-    
+
     # ────────────────────────────────────────────────
     # Layer 2 — 校内 ACL（双重 ACL 第二层）
     # ────────────────────────────────────────────────
@@ -292,7 +298,7 @@ def _check_acl(src_name, dst_name, hosts, r1=None):
             return True, "ACL_ALLOW (白名单放行)"
         else:
             return False, "ACL_DENY (非授权区域禁止访问敏感区域)"
-    
+
     return True, "ACL_ALLOW"
 
 
@@ -341,103 +347,129 @@ def cmd_send(net, src_name, dst_name, filename):
 
     print(f"[SEND] {src_name} → {dst_name}: {filename} ({file_size_mb} MB)")
 
-    # 3. 计算路由路径
     path = _resolve_path(src_name, dst_name)
     print(f"[ROUTE] 路径: {' → '.join(path)}")
+    print(f"[ACL] {acl_reason}")
+    print(f"[PROTOCOL] TCP/Netcat — 经真实网络拓扑传输 (iptables/QoS/IDS 生效)")
 
-    # 4. 发送方 files/ 写入副本（发送记录）
+    # ── 真实网络传输 (nc)：数据经 Mininet 拓扑路由 ──
+    dst_ip = _get_ip(dst_host)
+    tmp_send = f"/tmp/_send_{src_name}_{filename}"
+    tmp_recv = f"/tmp/_recv_{dst_name}_{filename}"
+
+    # 将源文件复制到 /tmp（所有命名空间共享文件系统，但 nc 连接走各自网络栈）
+    shutil.copy2(res_path, tmp_send)
+    if os.path.exists(tmp_recv):
+        os.remove(tmp_recv)
+
+    # 接收方：在其网络命名空间中启动 nc 监听（绑定接收方 IP）
+    dst_host.cmd("kill $(pgrep -f 'nc -l -p 9999') 2>/dev/null; true")
+    time.sleep(0.1)
+    dst_host.cmd(f"nc -l -p 9999 > {tmp_recv} &")
+    time.sleep(0.3)
+
+    # 发送方：通过真实网络拓扑发送文件
+    # TCP 连接路径: src → s_src → [agg] → r1(iptables) → [agg] → s_dst → dst
+    md5_src = _md5_file(res_path)
+    start_time = time.time()
+    src_host.cmd(f"timeout 15 nc -w 10 {dst_ip} 9999 < {tmp_send} 2>&1")
+    elapsed = round(time.time() - start_time, 3)
+    time.sleep(0.3)
+
+    # 验证传输结果（MD5 校验确认数据完整性）
+    dst_files = os.path.join(FS_TOPOLOGY_DIR, "nodes", dst_name, FILE_DIR)
+    os.makedirs(dst_files, exist_ok=True)
+    dst_file = os.path.join(dst_files, filename)
+    transfer_ok = False
+
+    if os.path.exists(tmp_recv) and os.path.getsize(tmp_recv) > 0:
+        md5_recv = _md5_file(tmp_recv)
+        if md5_src == md5_recv:
+            transfer_ok = True
+            shutil.copy2(tmp_recv, dst_file)
+
+    # 发送方 files/ 写入副本（发送记录）
     src_files = os.path.join(FS_TOPOLOGY_DIR, "nodes", src_name, FILE_DIR)
     os.makedirs(src_files, exist_ok=True)
     shutil.copy2(res_path, os.path.join(src_files, filename))
 
-    # 5. QoS 模拟延迟
-    qos_delay_ms = 0
-    if src_name.startswith("finance"):
-        qos_delay_ms = 2
-    elif "r1" in path:
-        qos_delay_ms = len([h for h in path if h == "r1" or "agg" in h]) * 3
-    if qos_delay_ms > 0:
-        time.sleep(qos_delay_ms / 1000.0)
-
-    # 6. 直接写入目标主机 files/（与 ls 命令读取同一宿主文件系统目录）
-    dst_files = os.path.join(FS_TOPOLOGY_DIR, "nodes", dst_name, FILE_DIR)
-    os.makedirs(dst_files, exist_ok=True)
-    dst_file = os.path.join(dst_files, filename)
-
-    md5_src = _md5_file(res_path)
-    start_time = time.time()
-
-    # 直接复制文件到目标目录（宿主文件系统操作，可靠且与 ls 一致）
-    shutil.copy2(res_path, dst_file)
-    elapsed = round(time.time() - start_time, 3)
-
-    # 7. 通过 netcat 验证网络层连通性（发送简短 ACK 握手）
-    nc_ok = False
-    try:
-        dst_host.cmd("kill $(pgrep -f 'nc -l -p 9999') 2>/dev/null; true")
-        time.sleep(0.1)
-        dst_host.cmd("nc -l -p 9999 -w 5 > /dev/null &")
-        time.sleep(0.2)
-        result = src_host.cmd(f"echo 'ACK:{filename}' | nc -w 3 {_get_ip(dst_host)} 9999")
-        nc_ok = ('ACK' in result or True)  # nc 连通即成功
-        time.sleep(0.2)
-    except Exception:
-        pass  # 连通性测试失败不影响文件已落盘的事实
-
-    # 8. 校验
-    if os.path.exists(dst_file) and os.path.getsize(dst_file) > 0:
-        md5_dst = _md5_file(dst_file)
-        match = (md5_src == md5_dst)
-        nc_status = "✓ 连通" if nc_ok else "—"
-        print(f"[OK] 传输完成! 耗时: {elapsed}s, MD5: {'✓ 一致' if match else '✗ 不一致'}, 网络: {nc_status}")
+    # 输出结果
+    throughput = round(file_size_mb * 8 / elapsed, 2) if elapsed > 0 and file_size_mb > 0 else 0
+    if transfer_ok:
+        print(f"[OK] 传输完成! 耗时: {elapsed}s, 吞吐: {throughput} Mbps, MD5: ✓ 一致")
+        print(f"[NETWORK] ✓ 数据经真实 TCP/IP 栈传输")
     else:
-        match = False
-        print(f"[WARN] 目标文件写入失败，请检查磁盘空间和权限")
+        recv_size = os.path.getsize(tmp_recv) if os.path.exists(tmp_recv) else 0
+        if recv_size == 0:
+            print(f"[FAIL] 网络拦截! 0 bytes received (iptables/ACL 在数据平面 DROP)")
+        else:
+            print(f"[FAIL] 传输不完整! 接收: {recv_size}/{file_size} bytes")
 
-    # 6. 记录日志
-    _log_transfer(src_name, dst_name, filename, file_size_mb, path, acl_reason, elapsed, match)
+    # 清理临时文件
+    for p in [tmp_send, tmp_recv]:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+    # 记录日志
+    _log_transfer(src_name, dst_name, filename, file_size_mb, path, acl_reason, elapsed, transfer_ok)
 
 
 def cmd_msg(src_host, dst_host, message):
     """
-    文本消息通信。
-    
+    文本消息通信 — 通过真实 nc 经网络拓扑发送。
+
     mininet> msg office1 dorm1 "Meeting at 3pm"
+
+    消息内容经 TCP/Netcat 从发送方网络命名空间传输到接收方网络命名空间，
+    经过真实路由路径（交换机→路由器→iptables→交换机）。
     """
     print(f"[MSG] {src_host.name} → {dst_host.name}: \"{message}\"")
 
     path = _resolve_path(src_host.name, dst_host.name)
     print(f"[ROUTE] 路径: {' → '.join(path)}")
 
-    # 写入接收方 files/ 为 .txt 文件（宿主文件系统直接写入，与 ls 一致）
+    # ── 真实网络传输：消息内容经 nc 发送 ──
+    dst_ip = _get_ip(dst_host)
+    msg_ts = datetime.now().strftime("%H%M%S_%f")[:-3]
+    msg_content = f"From: {src_host.name}\nTo: {dst_host.name}\nTime: {datetime.now()}\n---\n{message}\n"
+
+    tmp_send = f"/tmp/_msg_send_{src_host.name}_{msg_ts}.txt"
+    tmp_recv = f"/tmp/_msg_recv_{dst_host.name}_{msg_ts}.txt"
+
+    # 写入发送方临时文件（共享文件系统，但 nc 连接走各自网络栈）
+    with open(tmp_send, "w", encoding="utf-8") as f:
+        f.write(msg_content)
+
+    # 接收方监听（在其网络命名空间中绑定 IP）
+    dst_host.cmd("kill $(pgrep -f 'nc -l -p 9998') 2>/dev/null; true")
+    time.sleep(0.1)
+    dst_host.cmd(f"nc -l -p 9998 > {tmp_recv} &")
+    time.sleep(0.3)
+
+    # 发送方通过真实网络拓扑发送消息内容
+    src_host.cmd(f"timeout 10 nc -w 5 {dst_ip} 9998 < {tmp_send} 2>&1")
+    time.sleep(0.5)
+
+    # 将接收到的消息复制到 fs_topology（模拟接收方保存）
     dst_files = os.path.join(FS_TOPOLOGY_DIR, "nodes", dst_host.name, "files")
     os.makedirs(dst_files, exist_ok=True)
-    # 用微秒精度时间戳避免同秒覆写
-    ts = datetime.now().strftime("%H%M%S_%f")[:-3]
-    msg_file = os.path.join(dst_files, f"msg_{src_host.name}_{ts}.txt")
-    content = f"From: {src_host.name}\nTo: {dst_host.name}\nTime: {datetime.now()}\n---\n{message}\n"
-    with open(msg_file, "w", encoding="utf-8") as f:
-        f.write(content)
+    msg_file = os.path.join(dst_files, f"msg_{src_host.name}_{msg_ts}.txt")
 
-    # === 落盘验证 ===
-    if os.path.exists(msg_file) and os.path.getsize(msg_file) > 0:
-        print(f"[FS] 文件已落盘: {os.path.basename(msg_file)} ({os.path.getsize(msg_file)} bytes)")
+    if os.path.exists(tmp_recv) and os.path.getsize(tmp_recv) > 0:
+        shutil.copy2(tmp_recv, msg_file)
+        print(f"[MSG] 网络传输完成 ✓ ({os.path.getsize(tmp_recv)} bytes)")
+        print(f"[NETWORK] ✓ 消息经真实 TCP/IP 栈传输")
     else:
-        print(f"[FS] 警告: 文件未成功写入磁盘!")
+        print(f"[MSG] 网络传输失败 — 消息未送达 (ACL/防火墙可能拦截)")
 
-    # 通过 netcat 验证网络层连通性（发送简短 ACK 握手）
-    try:
-        dst_host.cmd("kill $(pgrep -f 'nc -l -p 9998') 2>/dev/null; true")
-        time.sleep(0.1)
-        dst_host.cmd("nc -l -p 9998 -w 5 > /dev/null &")
-        time.sleep(0.2)
-        src_host.cmd(f"echo 'MSG_ACK:{ts}' | nc -w 3 {_get_ip(dst_host)} 9998")
-        time.sleep(0.2)
-        print(f"[MSG] 网络连通性已验证 ✓")
-    except Exception:
-        pass
-
-    print(f"[MSG] 已写入: fs_topology/nodes/{dst_host.name}/files/{os.path.basename(msg_file)}")
+    # 清理临时文件
+    for p in [tmp_send, tmp_recv]:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
 
 
 def cmd_ls(host):

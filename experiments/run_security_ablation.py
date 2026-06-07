@@ -85,11 +85,12 @@ def _run_flood_pings(client, target_ip, count=FLOOD_PING_COUNT):
 
 def _read_icmp_drop_pkts(r1):
     """
-    读取 FORWARD 链中 ICMP DROP 规则（位置 2）的包计数。
+    读取 ICMP_LIMIT 子链中 DROP 规则（位置 2）的包计数。
+    （修复：ICMP Flood 已改用自定义子链 RETURN 模式，不在 FORWARD 主链中直接 DROP）
     返回: 匹配的包数（int），读取失败返回 0。
     """
     out = r1.cmd(
-        "iptables -L FORWARD -v -x -n --line-numbers 2>/dev/null "
+        "iptables -L ICMP_LIMIT -v -x -n --line-numbers 2>/dev/null "
         "| awk '$1==\"2\" {print $2; exit}'"
     ).strip()
     if not out:

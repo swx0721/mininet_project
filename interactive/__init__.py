@@ -21,6 +21,91 @@ interactive/ — 交互式校园网络演示子系统
 所有功能保留现有 QoS / RR / ACL / IDS / Firewall / VPN / 双校区。
 """
 
+import sys
+
+
+# ================================================================
+# 共享工具函数（必须在所有 import 之前定义，供各子模块使用）
+# ================================================================
+
+def _find_mininet_cli_dict():
+    """
+    找到 Mininet CLI 的全局命名空间（py 命令在此执行）。
+
+    Mininet 的 do_py() 使用 globals() —— 即定义 do_py 的模块的 __dict__，
+    也就是 mininet.cli 模块的 __dict__。
+
+    返回:
+        dict | None: mininet.cli 的 __dict__，找不到则返回 None
+    """
+    cli_mod = sys.modules.get('mininet.cli')
+    if cli_mod is not None:
+        return cli_mod.__dict__
+
+    for name, mod in sys.modules.items():
+        if name.startswith('mininet') and hasattr(mod, 'CLI'):
+            return mod.__dict__
+
+    return None
+
+
+def _find_main_dict():
+    """
+    找到 __main__ 的全局命名空间（main.py 的 globals）。
+    作为 fallback，防止极端情况。
+    """
+    import __main__
+    return __main__.__dict__
+
+
+def get_net():
+    """
+    获取 Mininet 网络对象（供所有交互模块使用）。
+
+    Mininet CLI 的 do_py() 方法执行代码时，net 存在 eval() 的 locals 字典里
+    （{'net': self.mn, ...}），不是 sys.modules 或 __main__ 的模块属性。
+    因此必须通过 inspect 回溯调用栈，在 CLI 执行帧的 f_locals 中找到 net。
+
+    Returns:
+        Mininet 对象 or None
+    """
+    import inspect
+
+    # ── 方法 1: 回溯调用栈，在 frame locals/globals 中查找 net ──
+    # 当 "py enable_vpn('home_pc')" 执行时：
+    #   do_py() 的 eval(code, globals(), {'net': self.mn}) 把 net 放在 locals
+    #   我们从 get_net() 一路回溯到 do_py() 的帧，就能找到它
+    frame = inspect.currentframe()
+    try:
+        f = frame.f_back
+        depth = 0
+        while f is not None and depth < 30:
+            # 先查 f_locals（CLI eval 的 locals）
+            net = f.f_locals.get('net')
+            if net is not None and hasattr(net, 'get'):
+                return net
+            # 再查 f_globals（模块级全局变量）
+            net = f.f_globals.get('net')
+            if net is not None and hasattr(net, 'get'):
+                return net
+            f = f.f_back
+            depth += 1
+    finally:
+        del frame
+
+    # ── 方法 2: __main__ 兜底 ──
+    import __main__
+    net = getattr(__main__, 'net', None)
+    if net is not None and hasattr(net, 'get'):
+        return net
+
+    return None
+
+
+# ================================================================
+# 导入各子模块的函数
+# ================================================================
+
 from interactive.file_transfer import transfer_file
 from interactive.resource_access import download_http, download_ftp
 from interactive.identity_manager import show_identity, switch_identity, enable_vpn, disable_vpn
@@ -29,6 +114,7 @@ from security.perimeter_acl import access_resource, check_perimeter_acl, print_a
 
 # 所有交互函数字典（统一注入目标）
 _INTERACTIVE_FUNCS = {
+    'get_net': get_net,
     'transfer_file': transfer_file,
     'download_http': download_http,
     'download_ftp': download_ftp,
@@ -46,39 +132,6 @@ _INTERACTIVE_FUNCS = {
 }
 
 
-def _find_mininet_cli_dict():
-    """
-    找到 Mininet CLI 的全局命名空间（py 命令在此执行）。
-
-    Mininet 的 do_py() 使用 globals() —— 即定义 do_py 的模块的 __dict__，
-    也就是 mininet.cli 模块的 __dict__。
-
-    返回:
-        dict | None: mininet.cli 的 __dict__，找不到则返回 None
-    """
-    import sys
-    # 方式1：直接查 sys.modules
-    cli_mod = sys.modules.get('mininet.cli')
-    if cli_mod is not None:
-        return cli_mod.__dict__
-
-    # 方式2：遍历所有已加载模块，找包含 CLI 类的 mininet 模块
-    for name, mod in sys.modules.items():
-        if name.startswith('mininet') and hasattr(mod, 'CLI'):
-            return mod.__dict__
-
-    return None
-
-
-def _find_main_dict():
-    """
-    找到 __main__ 的全局命名空间（main.py 的 globals）。
-    作为 fallback，防止极端情况。
-    """
-    import __main__
-    return __main__.__dict__
-
-
 def setup():
     """
     一键加载所有交互函数到 Mininet CLI 全局作用域。
@@ -94,7 +147,6 @@ def setup():
     cli_dict = _find_mininet_cli_dict()
     main_dict = _find_main_dict()
 
-    # 去重注入（同一个 dict 只注入一次）
     injected = set()
     targets = []
     if cli_dict is not None:
@@ -107,10 +159,9 @@ def setup():
             continue
         injected.add(gid)
         g.update(_INTERACTIVE_FUNCS)
-        # 也在目标的 __builtins__ 层面做个标记（仅调试用）
-        # g['__interactive_loaded__'] = True
 
-    print("[INTERACTIVE] 14 个交互函数已就绪")
+    print("[INTERACTIVE] 15 个交互函数已就绪")
+    print("  get_net (net object locator)")
     print("  transfer_file, download_http, download_ftp")
     print("  show_identity, switch_identity, enable_vpn, disable_vpn")
     print("  show_blacklist, show_conntrack, scan, flood")

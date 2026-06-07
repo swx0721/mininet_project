@@ -1,0 +1,102 @@
+sudo python3 main.py --model final
+
+dorm1 ping -c 3 dorm2
+
+dorm1 ping -c 3 finance2
+
+dorm1 curl http://10.0.60.2/
+
+lib1 curl ftp://10.0.60.2/
+
+
+py (exec(open('network_cli.py').read(), globals()), register(net))[1]
+
+send  dorm1 dorm2 campus.jpg
+
+send office1 dorm1 通知_2026.docx
+
+msg office1 dorm2 "Meeting at 3pm."
+
+ls dorm1
+
+ls dorm2
+
+
+(1)初始VPN关闭
+send home_pc dorm1 VPN测试文件.pdf
+send home_pc finance1 VPN测试文件.pdf
+
+(2)开启VPN
+py enable_vpn("home_pc")
+send home_pc dorm1 VPN测试文件.pdf
+send home_pc finance1 VPN测试文件.pdf
+
+(3)再次关闭VPN
+py disable_vpn("home_pc")
+send home_pc dorm1 VPN测试文件.pdf
+send home_pc finance1 VPN测试文件.pdf
+
+
+新版：
+# =====================================================
+# CampusNet 完整演示指令（真实 vsftpd + WireGuard VPN 版）
+# =====================================================
+
+# --- 步骤 0: 宿主机预装（一次性）---
+sudo apt-get install vsftpd -y
+sudo apt-get install wireguard-tools -y
+
+# --- 步骤 1: 启动网络 ---
+sudo python3 main.py --model final
+
+# --- 步骤 2: 基础连通性 ---
+dorm1 ping -c 3 dorm2                 # ✅ 宿舍区内二层通信（同交换机）
+dorm1 ping -c 3 finance2              # ❌ ACL 黑名单拦截（宿舍→财务）
+
+# --- 步骤 3: 应用层服务（真实 vsftpd）---
+dorm1 curl http://10.0.60.2/          # HTTP: 访问 Server1 Web
+dorm1 curl ftp://10.0.60.2/           # FTP: 匿名列出 Server1 目录
+dorm1 curl ftp://10.0.60.2/README.txt # FTP: 下载文件
+dorm1 ftp 10.0.60.2                   # FTP: 交互式登录（匿名, 回车跳过密码）
+
+# --- 步骤 4: 加载交互框架---
+py (exec(open('network_cli.py').read(), globals()), register(net))[1]
+
+# --- 步骤 5: 文件传输 ---
+send dorm1 dorm2 campus.jpg
+send office1 dorm1 通知_2026.docx     # 办公→宿舍（ACL 放通）
+msg office1 dorm2 "Meeting at 3pm."
+ls dorm1                              # 查看 dorm1 收到的文件
+ls dorm2                              # 查看 dorm2 收到的文件
+
+# --- 步骤 6: VPN 演示（WireGuard 真实隧道）---
+
+# (A) VPN 关闭时 — 校外隔离
+send home_pc dorm1 VPN测试文件.pdf     # ❌ ACL_EXTERNAL_BLOCK
+send home_pc finance1 VPN测试文件.pdf   # ❌ ACL_EXTERNAL_BLOCK
+
+# (B) 查看 home_pc 状态
+py show_identity("home_pc")
+# 输出: Identity: HOME_USER, Tunnel: INACTIVE
+
+# (C) 开启 VPN（真实 WireGuard 隧道）
+py enable_vpn("home_pc")
+# 输出: 虚拟 IP: 10.0.80.10 (WireGuard 隧道, 真实分配)
+#       Tunnel: ACTIVE (WireGuard)
+
+# (D) VPN 开启后 — 文件传输
+py show_identity("home_pc")           # 应该显示 VPN IP 10.0.80.10 + 隧道状态
+send home_pc dorm1 VPN测试文件.pdf     # ✅ 通过 wg0 接口访问普通区域
+send home_pc finance1 VPN测试文件.pdf   # ❌ ACL_VPN_DENY（禁止访问敏感区域）
+
+# (E) 关闭 VPN
+py disable_vpn("home_pc")
+# 输出: VPN 已断开，身份恢复: HOME_USER
+
+# (F) 验证恢复隔离
+send home_pc dorm1 VPN测试文件.pdf     # ❌ ACL_EXTERNAL_BLOCK
+send home_pc finance1 VPN测试文件.pdf   # ❌ ACL_EXTERNAL_BLOCK
+py show_identity("home_pc")           # Tunnel: INACTIVE
+
+# --- 步骤 7: 出口 ---
+exit

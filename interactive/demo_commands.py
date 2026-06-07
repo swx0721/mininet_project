@@ -24,8 +24,8 @@ def scan(attacker_name, target_name, port_range="8001-8025"):
         - 第 20 端口: 触发封禁 + 写入 SQLite
         - 后续端口: 全部失败 (Connection refused)
     """
-    import __main__
-    net = getattr(__main__, "net", None)
+    from interactive import get_net
+    net = get_net()
     if not net:
         print("[SCAN] ERROR: Mininet 网络未连接")
         return
@@ -131,8 +131,8 @@ def show_conntrack():
     print("  Stateful Firewall — Connection Tracking")
     print("=" * 50)
 
-    import __main__
-    net = getattr(__main__, "net", None)
+    from interactive import get_net
+    net = get_net()
     if net:
         r1 = net.get("r1")
         if r1:
@@ -152,8 +152,8 @@ def flood(attacker_name, target_name, count=40, interval=0.02):
     用法:
         mininet> py flood("dorm1", "server1", count=40)
     """
-    import __main__
-    net = getattr(__main__, "net", None)
+    from interactive import get_net
+    net = get_net()
     if not net:
         print("[FLOOD] ERROR: Mininet 网络未连接")
         return

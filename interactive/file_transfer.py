@@ -38,7 +38,10 @@ def _get_project_root():
 
 def transfer_file(src_name, dst_name, filename):
     """
-    主机间文件传输 — 从发送方 outbox 读取，经 netcat 传输至接收方 inbox。
+    主机间文件传输 — 通过真实 TCP/Netcat 经 Mininet 拓扑路由。
+
+    数据流: sender → s_sender → [agg] → r1(iptables/QoS) → [agg] → s_dst → receiver
+    所有策略（ACL、QoS、IDS、VPN）对传输数据包真实生效。
 
     用法（Mininet CLI 中）:
         mininet> py transfer_file("dorm1", "dorm2", "校园风景.jpg")
@@ -60,8 +63,7 @@ def transfer_file(src_name, dst_name, filename):
             src_file = candidate
 
     if not src_file:
-        # 回退到 resources/ 目录搜索
-        for rdir in ["docs", "images", "zip", ""]:
+        for rdir in ["docs", "images", "zip", "misc", ""]:
             search = os.path.join(resources_dir, rdir, filename)
             if os.path.exists(search):
                 src_file = search
@@ -75,70 +77,93 @@ def transfer_file(src_name, dst_name, filename):
     file_size = os.path.getsize(src_file)
     file_size_mb = round(file_size / (1024 * 1024), 3)
 
-    # 2. 发送方 files/ 记录（复制副本）
-    os.makedirs(src_files, exist_ok=True)
-    shutil.copy2(src_file, os.path.join(src_files, filename))
+    # 2. ACL pre-check (Python-level，instant feedback)
+    try:
+        from network_cli import _check_acl
+        allowed, acl_reason = _check_acl(src_name, dst_name, None)
+        if not allowed:
+            print(f"[TRANSFER] {src_name} → {dst_name}: {filename} ({file_size_mb} MB)")
+            print(f"[ACL] {acl_reason} — 传输被拦截")
+            _log_transfer(src_name, dst_name, filename, file_size_mb,
+                          0, False)
+            return
+    except ImportError:
+        pass
 
-    # 3. 直接复制到目标 files/（宿主文件系统操作，可靠且与 ls 一致）
+    # 3. 真实网络传输 (TCP/Netcat)
+    from interactive import get_net
+    net = get_net()
+    if not net:
+        print("[TRANSFER] ERROR: Mininet 网络不可用")
+        return
+
+    src_host = net.get(src_name)
+    dst_host = net.get(dst_name)
+    if not src_host or not dst_host:
+        print(f"[TRANSFER] ERROR: 主机不存在: {src_name if not src_host else dst_name}")
+        return
+
+    dst_ip = _get_ip(dst_host)
+    tmp_send = f"/tmp/_transfer_send_{src_name}_{filename}"
+    tmp_recv = f"/tmp/_transfer_recv_{dst_name}_{filename}"
+
+    shutil.copy2(src_file, tmp_send)
+    if os.path.exists(tmp_recv):
+        os.remove(tmp_recv)
+
+    print(f"\n{'=' * 50}")
+    print(f"  Transfer: {src_name} → {dst_name}")
+    print(f"  File:    {filename} ({file_size_mb} MB)")
+    print(f"  Protocol: TCP/Netcat (real network)")
+    print(f"{'=' * 50}")
+
+    # 接收方监听（在其网络命名空间中绑定 IP）
+    dst_host.cmd("kill $(pgrep -f 'nc -l -p 9999') 2>/dev/null; true")
+    time.sleep(0.1)
+    dst_host.cmd(f"nc -l -p 9999 > {tmp_recv} &")
+    time.sleep(0.3)
+
+    # 发送方通过真实网络拓扑发送
+    md5_before = _md5(src_file)
+    t0 = time.time()
+    src_host.cmd(f"timeout 15 nc -w 10 {dst_ip} 9999 < {tmp_send} 2>&1")
+    elapsed = round(time.time() - t0, 3)
+    time.sleep(0.3)
+
+    # 4. MD5 校验
+    transfer_ok = False
     dst_files = os.path.join(fs_nodes, dst_name, "files")
     os.makedirs(dst_files, exist_ok=True)
     dst_file = os.path.join(dst_files, filename)
 
-    md5_before = _md5(src_file)
-    t0 = time.time()
-
-    # 直接文件复制（宿主文件系统，跳过不可靠的 netcat 管道）
-    shutil.copy2(src_file, dst_file)
-
-    # 通过 netcat 验证网络层连通性（简短 ACK 握手）
-    from mininet.net import Mininet
-    net = Mininet._instance if hasattr(Mininet, '_instance') else None
-    if net:
-        src_host = net.get(src_name)
-        dst_host = net.get(dst_name)
-        if src_host and dst_host:
-            try:
-                dst_host.cmd("kill $(pgrep -f 'nc -l -p 9999') 2>/dev/null; true")
-                time.sleep(0.1)
-                dst_host.cmd("nc -l -p 9999 -w 5 > /dev/null &")
-                time.sleep(0.2)
-                src_host.cmd(f"echo 'ACK:{filename}' | nc -w 3 {_get_ip(dst_host)} 9999")
-                time.sleep(0.2)
-            except Exception:
-                pass  # 网络验证失败不影响文件已落盘
-
-    elapsed = round(time.time() - t0, 3)
-
-    # 4. MD5 校验
-    if os.path.exists(dst_file) and os.path.getsize(dst_file) > 0:
-        md5_after = _md5(dst_file)
-        md5_ok = (md5_before == md5_after)
-    else:
-        md5_ok = False
+    if os.path.exists(tmp_recv) and os.path.getsize(tmp_recv) > 0:
+        md5_after = _md5(tmp_recv)
+        if md5_before == md5_after:
+            transfer_ok = True
+            shutil.copy2(tmp_recv, dst_file)
 
     # 5. 吞吐量计算
-    if elapsed > 0 and file_size_mb > 0:
-        throughput = round(file_size_mb * 8 / elapsed, 1)
-    else:
-        throughput = 0
+    throughput = round(file_size_mb * 8 / elapsed, 2) if elapsed > 0 and file_size_mb > 0 else 0
 
     # 6. 终端输出
-    print()
-    print("=" * 50)
-    print("  Transfer Success" if md5_ok else "  Transfer FAILED (MD5 mismatch)")
-    print("=" * 50)
-    print(f"  Source:           {src_name}")
-    print(f"  Destination:      {dst_name}")
-    print(f"  File:             {filename}")
-    print(f"  Size:             {file_size_mb} MB")
-    print(f"  Transfer time:    {elapsed} s")
-    print(f"  Avg throughput:   {throughput} Mbps")
-    print(f"  MD5 verify:       {'PASS' if md5_ok else 'FAIL'}")
-    print("=" * 50)
-    print()
+    print(f"  Transfer time:  {elapsed} s")
+    print(f"  Throughput:     {throughput} Mbps")
+    print(f"  MD5 verify:     {'PASS' if transfer_ok else 'FAIL'}")
+    if not transfer_ok:
+        recv_size = os.path.getsize(tmp_recv) if os.path.exists(tmp_recv) else 0
+        print(f"  Received:       {recv_size}/{file_size} bytes")
+        print(f"  Network:        连接超时 (iptables/ACL 数据平面拦截)")
+    print(f"{'=' * 50}\n")
+
+    # 清理临时文件
+    for p in [tmp_send, tmp_recv]:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
 
     # 7. 写入日志
-    _log_transfer(src_name, dst_name, filename, file_size_mb, elapsed, throughput, md5_ok)
+    _log_transfer(src_name, dst_name, filename, file_size_mb, elapsed, throughput, transfer_ok)
 
 
 def _get_ip(host):

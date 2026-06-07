@@ -66,20 +66,20 @@ def can_access(host_name, filename):
 
 def download_http(host_name, filename, server_ip="10.0.60.2"):
     """
-    从 HTTP 服务器下载文件到指定主机的 inbox。
+    从 HTTP 服务器下载文件（真实 curl HTTP 请求，经 Mininet 网络拓扑路由）。
 
     用法:
-        mininet> py download_http("dorm1", "课件下载.zip")
-        mininet> py download_http("home_pc", "财务数据报表.xlsx")
+        mininet> py download_http("dorm1", "bigfile.bin")
+        mininet> py download_http("home_pc", "index.html")
 
     流程:
         1. 权限检查 (can_access)
-        2. curl 下载
-        3. 保存到 fs_topology/nodes/<host>/inbox/
+        2. 真实 HTTP GET 请求（curl，经 r1 路由）
+        3. 保存到 fs_topology/nodes/<host>/files/
     """
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) if "__file__" in dir() else os.getcwd()
-    inbox = os.path.join(root, "fs_topology", "nodes", host_name, "inbox")
-    os.makedirs(inbox, exist_ok=True)
+    files_dir = os.path.join(root, "fs_topology", "nodes", host_name, "files")
+    os.makedirs(files_dir, exist_ok=True)
 
     # 1. 双层 ACL 检查 (Perimeter → Internal)
     from security.perimeter_acl import access_resource, print_access_result
@@ -93,35 +93,133 @@ def download_http(host_name, filename, server_ip="10.0.60.2"):
         print_access_result(result)
         return
 
-    # 2. curl 下载
-    import __main__
-    net = getattr(__main__, "net", None)
-    if net:
-        host = net.get(host_name)
-        if host:
-            url = f"http://{server_ip}/{filename}"
-            print(f"  Source:     {server_ip}")
-            print(f"  URL:        {url}")
-            t0 = time.time()
-            host.cmd(f"curl -s -o '/tmp/{filename}' '{url}'")
-            elapsed = round(time.time() - t0, 3)
-            # 复制到 inbox
-            dst = os.path.join(inbox, filename)
-            host.cmd(f"cp '/tmp/{filename}' '{dst}' 2>/dev/null || true")
-            size = os.path.getsize(dst) if os.path.exists(dst) else 0
-            print(f"  Status:     {'OK' if size > 0 else 'FAILED'}")
-            print(f"  Size:       {round(size/1024, 1)} KB")
-            print(f"  Time:       {elapsed} s")
-            print(f"  Saved to:   fs_topology/nodes/{host_name}/inbox/")
-        else:
-            print(f"  ERROR: 主机 {host_name} 不存在")
+    # 2. 真实 HTTP 下载（curl 经 Mininet 网络拓扑）
+    from interactive import get_net
+    net = get_net()
+    if not net:
+        print("  ERROR: Mininet 网络不可用")
+        print("=" * 50)
+        return
+
+    host = net.get(host_name)
+    if not host:
+        print(f"  ERROR: 主机 {host_name} 不存在")
+        print("=" * 50)
+        return
+
+    url = f"http://{server_ip}/{filename}"
+    tmp_remote = f"/tmp/_http_{host_name}_{filename}"
+    dst_local = os.path.join(files_dir, filename)
+
+    print(f"  Source:     {server_ip}")
+    print(f"  URL:        {url}")
+    print(f"  Protocol:   HTTP GET (curl, real network)")
+    t0 = time.time()
+    host.cmd(f"timeout 15 curl -s -o {tmp_remote} '{url}' 2>&1")
+    elapsed = round(time.time() - t0, 3)
+
+    # 检查 Mininet 命名空间中的下载结果
+    remote_size_str = host.cmd(f"stat -c '%s' {tmp_remote} 2>/dev/null || echo 0").strip()
+    try:
+        remote_size = int(remote_size_str)
+    except ValueError:
+        remote_size = 0
+
+    if remote_size > 0:
+        # 从命名空间的 /tmp 复制到宿主 fs_topology
+        host.cmd(f"cp {tmp_remote} {dst_local} 2>/dev/null || true")
+        size = os.path.getsize(dst_local) if os.path.exists(dst_local) else 0
+        throughput = round(size * 8 / (1024 * 1024) / elapsed, 2) if elapsed > 0 and size > 0 else 0
+        print(f"  Status:     OK")
+        print(f"  Size:       {round(size/1024, 1)} KB ({size} bytes)")
+        print(f"  Time:       {elapsed} s")
+        print(f"  Throughput: {throughput} Mbps")
+        print(f"  Saved to:   fs_topology/nodes/{host_name}/files/")
     else:
-        print(f"  ERROR: Mininet 网络未连接")
+        print(f"  Status:     FAILED (0 bytes — ACL/防火墙可能在数据平面拦截)")
+
+    # 清理远程临时文件
+    host.cmd(f"rm -f {tmp_remote} 2>/dev/null; true")
 
     print("=" * 50)
     print()
 
 
-def download_ftp():
-    """FTP 下载（与 HTTP 一致的模式，使用 curl ftp:// 协议）。"""
-    pass  # 如需实现，与 download_http 结构相同，切换为 ftp:// URL
+def download_ftp(host_name, filename, server_ip="10.0.60.2"):
+    """
+    从 FTP 服务器下载文件（真实 curl FTP 请求，经 Mininet 网络拓扑路由）。
+
+    用法:
+        mininet> py download_ftp("dorm1", "README.txt")
+        mininet> py download_ftp("office1", "share_doc.txt")
+
+    流程:
+        1. 权限检查 (can_access)
+        2. 真实 FTP 下载（curl ftp://，vsftpd 匿名访问）
+        3. 保存到 fs_topology/nodes/<host>/files/
+    """
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) if "__file__" in dir() else os.getcwd()
+    files_dir = os.path.join(root, "fs_topology", "nodes", host_name, "files")
+    os.makedirs(files_dir, exist_ok=True)
+
+    # 1. 双层 ACL 检查
+    from security.perimeter_acl import access_resource, print_access_result
+    result = access_resource(host_name, filename)
+
+    print()
+    print("=" * 50)
+    print(f"  FTP Download: {filename}")
+
+    if not result["allowed"]:
+        print_access_result(result)
+        return
+
+    # 2. 真实 FTP 下载（curl ftp:// 经 Mininet 网络拓扑）
+    from interactive import get_net
+    net = get_net()
+    if not net:
+        print("  ERROR: Mininet 网络不可用")
+        print("=" * 50)
+        return
+
+    host = net.get(host_name)
+    if not host:
+        print(f"  ERROR: 主机 {host_name} 不存在")
+        print("=" * 50)
+        return
+
+    url = f"ftp://{server_ip}/{filename}"
+    tmp_remote = f"/tmp/_ftp_{host_name}_{filename}"
+    dst_local = os.path.join(files_dir, filename)
+
+    print(f"  Source:     {server_ip}")
+    print(f"  URL:        {url}")
+    print(f"  Protocol:   FTP (curl, vsftpd anonymous)")
+    t0 = time.time()
+    host.cmd(f"timeout 15 curl -s -o {tmp_remote} '{url}' 2>&1")
+    elapsed = round(time.time() - t0, 3)
+
+    # 检查下载结果
+    remote_size_str = host.cmd(f"stat -c '%s' {tmp_remote} 2>/dev/null || echo 0").strip()
+    try:
+        remote_size = int(remote_size_str)
+    except ValueError:
+        remote_size = 0
+
+    if remote_size > 0:
+        host.cmd(f"cp {tmp_remote} {dst_local} 2>/dev/null || true")
+        size = os.path.getsize(dst_local) if os.path.exists(dst_local) else 0
+        throughput = round(size * 8 / (1024 * 1024) / elapsed, 2) if elapsed > 0 and size > 0 else 0
+        print(f"  Status:     OK")
+        print(f"  Size:       {round(size/1024, 1)} KB ({size} bytes)")
+        print(f"  Time:       {elapsed} s")
+        print(f"  Throughput: {throughput} Mbps")
+        print(f"  Saved to:   fs_topology/nodes/{host_name}/files/")
+    else:
+        print(f"  Status:     FAILED (0 bytes — 可能文件不存在或网络拦截)")
+
+    # 清理
+    host.cmd(f"rm -f {tmp_remote} 2>/dev/null; true")
+
+    print("=" * 50)
+    print()
