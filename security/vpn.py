@@ -107,21 +107,39 @@ class VpnManager:
         self.r1.cmd(f"ip link add {WG_INTERFACE} type wireguard")
         self.r1.cmd(f"ip addr add {VPN_SERVER_IP}/24 dev {WG_INTERFACE}")
 
-        # ---- 配置 WireGuard 参数（密钥通过文件传递） ----
+        # ---- 关键：关闭反向路径过滤 ----
+        # Ubuntu 默认 rp_filter=1（strict），WireGuard 解密后的内层包从 wg0 进入
+        # 时，内核会检查 "如果我要回复 src IP，是否也会走 wg0？"
+        # 虽然 10.0.80.0/24 的 connected route 理论上应通过此检查，但某些内核版本
+        # 或命名空间配置下 rp_filter 可能意外 DROP 转发包（计数器为 0）。
+        # 统一关闭确保 WireGuard 转发不受干扰。
+        self.r1.cmd("sysctl -w net.ipv4.conf.all.rp_filter=0 2>/dev/null || true")
+        self.r1.cmd("sysctl -w net.ipv4.conf.default.rp_filter=0 2>/dev/null || true")
+        # 确认 ip_forward 已启用（Mininet LinuxRouter 通常已设置，但双重保险）
+        self.r1.cmd("sysctl -w net.ipv4.ip_forward=1 2>/dev/null || true")
+
+        # ---- 配置 WireGuard 参数（密钥通过文件传递）----
+        # 注意：不在此处添加 peer，等 connect_client() 时再用真实公钥添加。
+        # WireGuard 要求 peer 公钥必须是合法的 base64(32 bytes)，
+        # 占位符会导致整个 wg set 命令失败（listen-port 也无法生效）。
         self.r1.cmd(
             f"wg set {WG_INTERFACE} "
             f"listen-port {VPN_LISTEN_PORT} "
-            f"private-key {VPN_SERVER_PRIVKEY_FILE} "
-            f"peer DUMMY_PUBLIC_KEY "
-            f"allowed-ips {VPN_CLIENT_IP}/32"
+            f"private-key {VPN_SERVER_PRIVKEY_FILE}"
         )
-        # 注意：peer 的 public_key 先设为占位符，connect_client() 时替换
 
         # 启用接口
         self.r1.cmd(f"ip link set {WG_INTERFACE} up")
 
+        # ---- 验证监听端口 ----
+        time.sleep(0.3)
+        actual_listen = self._parse_listen_port(self.r1_cmd_status())
+        if actual_listen and actual_listen != VPN_LISTEN_PORT:
+            info(f"[VPN] [WARN] 期望端口 {VPN_LISTEN_PORT}，实际: {actual_listen}\n")
+        self._actual_listen_port = actual_listen or VPN_LISTEN_PORT
+
         info(f"[VPN] VPN 服务端已就绪 "
-             f"(wg0={VPN_SERVER_IP}/24, 监听 {PHYSICAL_ENDPOINT_IP}:{VPN_LISTEN_PORT})\n")
+             f"(wg0={VPN_SERVER_IP}/24, 监听 {PHYSICAL_ENDPOINT_IP}:{self._actual_listen_port})\n")
         return True
 
     def connect_client(self):
@@ -165,20 +183,31 @@ class VpnManager:
         self.home_pc.cmd(f"ip addr add {VPN_CLIENT_IP}/24 dev {WG_INTERFACE}")
 
         # ---- 配置 WireGuard 参数（密钥通过文件传递，不用 /proc/self/fd/N）----
+        # 使用 r1 的实际监听端口（而非常量，防止端口设置失败导致端口不匹配）
+        actual_port = getattr(self, '_actual_listen_port', VPN_LISTEN_PORT)
         self.home_pc.cmd(
             f"wg set {WG_INTERFACE} "
             f"private-key {VPN_CLIENT_PRIVKEY_FILE} "
             f"peer {server_pub} "
-            f"endpoint {PHYSICAL_ENDPOINT_IP}:{VPN_LISTEN_PORT} "
+            f"endpoint {PHYSICAL_ENDPOINT_IP}:{actual_port} "
             f"allowed-ips 0.0.0.0/0 "
             f"persistent-keepalive 15"
         )
         self.home_pc.cmd(f"ip link set {WG_INTERFACE} up")
 
-        # ---- 注册客户端到服务端（更新 peer）----
-        # 删除之前的占位符 peer
-        self.r1.cmd(f"wg set {WG_INTERFACE} peer DUMMY_PUBLIC_KEY remove 2>/dev/null || true")
-        # 添加真正的客户端 peer
+        # ---- 关闭 home_pc 的 rp_filter ----
+        self.home_pc.cmd("sysctl -w net.ipv4.conf.all.rp_filter=0 2>/dev/null || true")
+        self.home_pc.cmd(f"sysctl -w net.ipv4.conf.{WG_INTERFACE}.rp_filter=0 2>/dev/null || true")
+
+        # ---- 添加校园网路由（关键！）----
+        # 默认情况下 home_pc 到 10.0.x.x 走物理接口，无法被 VPN ACL 放行。
+        # 必须显式将校园网流量路由到 wg0，使数据包经加密隧道到达 r1，
+        # 在 r1 解密后以源 IP 10.0.80.10 进入 FORWARD 链，匹配 -i wg0 的 VPN ACL。
+        self.home_pc.cmd(
+            f"ip route add 10.0.0.0/16 via {VPN_SERVER_IP} dev {WG_INTERFACE}"
+        )
+
+        # ---- 注册客户端到服务端（添加 peer）----
         self.r1.cmd(
             f"wg set {WG_INTERFACE} "
             f"peer {self.client_public_key} "
@@ -210,6 +239,12 @@ class VpnManager:
             return
 
         info("[VPN] 断开 VPN 隧道...\n")
+
+        # 客户端：删除校园网路由（必须在接口删除前操作）
+        self.home_pc.cmd(
+            f"ip route del 10.0.0.0/16 via {VPN_SERVER_IP} "
+            f"dev {WG_INTERFACE} 2>/dev/null || true"
+        )
 
         # 客户端：删除 wg0 接口
         self.home_pc.cmd(f"ip link del {WG_INTERFACE} 2>/dev/null || true")
@@ -260,6 +295,19 @@ class VpnManager:
     # ================================================================
     # 辅助方法
     # ================================================================
+
+    def _parse_listen_port(self, wg_show_output):
+        """从 `wg show wg0` 输出解析实际监听端口。"""
+        for line in wg_show_output.split('\n'):
+            line = line.strip()
+            if line.startswith('listening port:'):
+                parts = line.split(':')
+                if len(parts) >= 2:
+                    try:
+                        return int(parts[-1].strip())
+                    except ValueError:
+                        pass
+        return None
 
     def _install_wireguard(self, node):
         """

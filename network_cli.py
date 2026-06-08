@@ -362,17 +362,28 @@ def cmd_send(net, src_name, dst_name, filename):
     if os.path.exists(tmp_recv):
         os.remove(tmp_recv)
 
-    # 接收方：在其网络命名空间中启动 nc 监听（绑定接收方 IP）
-    dst_host.cmd("kill $(pgrep -f 'nc -l -p 9999') 2>/dev/null; true")
+    # 接收方：在其网络命名空间中启动 nc 监听
+    dst_host.cmd("kill $(pgrep -f 'nc.*9999') 2>/dev/null; true")
     time.sleep(0.1)
-    dst_host.cmd(f"nc -l -p 9999 > {tmp_recv} &")
-    time.sleep(0.3)
+    dst_host.cmd(f"nc -l 9999 > {tmp_recv} &")
+    time.sleep(0.5)
+
+    # 验证监听器已启动（ss 检查端口 9999）
+    listener = dst_host.cmd(
+        "ss -tlnp 2>/dev/null | grep 9999 || echo NOT_LISTENING"
+    ).strip()
+    if "NOT_LISTENING" in listener:
+        # openbsd nc 备用语法
+        dst_host.cmd(f"nc -l -p 9999 > {tmp_recv} &")
+        time.sleep(0.5)
 
     # 发送方：通过真实网络拓扑发送文件
     # TCP 连接路径: src → s_src → [agg] → r1(iptables) → [agg] → s_dst → dst
     md5_src = _md5_file(res_path)
     start_time = time.time()
-    src_host.cmd(f"timeout 15 nc -w 10 {dst_ip} 9999 < {tmp_send} 2>&1")
+    nc_out = src_host.cmd(
+        f"timeout 15 nc -w 10 {dst_ip} 9999 < {tmp_send} 2>&1"
+    ).strip()
     elapsed = round(time.time() - start_time, 3)
     time.sleep(0.3)
 
@@ -401,7 +412,63 @@ def cmd_send(net, src_name, dst_name, filename):
     else:
         recv_size = os.path.getsize(tmp_recv) if os.path.exists(tmp_recv) else 0
         if recv_size == 0:
-            print(f"[FAIL] 网络拦截! 0 bytes received (iptables/ACL 在数据平面 DROP)")
+            print(f"[FAIL] 网络拦截! 0 bytes received")
+            if nc_out:
+                print(f"[DIAG] nc 发送端输出: {nc_out[:200]}")
+            from interactive import get_net
+            net = get_net()
+            if net:
+                r1 = net.get("r1")
+                if r1:
+                    # ── r1 内核参数（rp_filter / ip_forward）──
+                    sysctl_out = r1.cmd(
+                        "sysctl net.ipv4.conf.all.rp_filter "
+                        "net.ipv4.ip_forward 2>/dev/null"
+                    ).strip()
+                    print(f"[DIAG] r1 内核参数:")
+                    print(f"  {sysctl_out}")
+
+                    # ── r1 wg0 路由 ──
+                    wg_route = r1.cmd(
+                        "ip route show dev wg0 2>/dev/null"
+                    ).strip()
+                    print(f"[DIAG] r1 wg0 路由: {wg_route}")
+
+                    # ── wg0 规则及计数器 ──
+                    wg_rules = r1.cmd(
+                        "iptables -L FORWARD -n -v 2>&1 | grep -i wg0"
+                    ).strip()
+                    print(f"[DIAG] wg0 规则 (含收发包计数):")
+                    if wg_rules:
+                        for line in wg_rules.split('\n'):
+                            print(f"  {line}")
+                    else:
+                        print(f"  (无 wg0 规则! VPN ACL 未正确加载)")
+
+                # ── 接收方 nc 监听状态 ──
+                listener = dst_host.cmd(
+                    "ss -tlnp 2>/dev/null | grep -E '9999|State' "
+                    "|| echo NOT_LISTENING"
+                ).strip()
+                print(f"[DIAG] 接收方 {dst_name} 端口 9999 状态:")
+                print(f"  {listener}")
+
+                # ── VPN 路由 + 连通性诊断 ──
+                if src_name == "home_pc":
+                    route = src_host.cmd(
+                        "ip route show 2>/dev/null"
+                    ).strip()
+                    if route:
+                        print(f"[DIAG] home_pc 路由表:")
+                        for line in route.split('\n')[:10]:
+                            print(f"  {line}")
+
+                    # 快速 ping 测试 VPN 隧道是否工作
+                    ping_result = src_host.cmd(
+                        f"timeout 3 ping -c 1 -W 2 {dst_ip} 2>&1"
+                    ).strip()
+                    print(f"[DIAG] VPN ping {dst_ip}:")
+                    print(f"  {ping_result[:300]}")
         else:
             print(f"[FAIL] 传输不完整! 接收: {recv_size}/{file_size} bytes")
 
@@ -443,10 +510,10 @@ def cmd_msg(src_host, dst_host, message):
         f.write(msg_content)
 
     # 接收方监听（在其网络命名空间中绑定 IP）
-    dst_host.cmd("kill $(pgrep -f 'nc -l -p 9998') 2>/dev/null; true")
+    dst_host.cmd("kill $(pgrep -f 'nc.*9998') 2>/dev/null; true")
     time.sleep(0.1)
-    dst_host.cmd(f"nc -l -p 9998 > {tmp_recv} &")
-    time.sleep(0.3)
+    dst_host.cmd(f"nc -l 9998 > {tmp_recv} &")
+    time.sleep(0.5)
 
     # 发送方通过真实网络拓扑发送消息内容
     src_host.cmd(f"timeout 10 nc -w 5 {dst_ip} 9998 < {tmp_send} 2>&1")

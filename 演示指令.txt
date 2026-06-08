@@ -50,8 +50,8 @@ sudo apt-get install wireguard-tools -y
 sudo python3 main.py --model final
 
 # --- 步骤 2: 基础连通性 ---
-dorm1 ping -c 3 dorm2                 # ✅ 宿舍区内二层通信（同交换机）
-dorm1 ping -c 3 finance2              # ❌ ACL 黑名单拦截（宿舍→财务）
+dorm1 ping -c 3 dorm2                 
+dorm1 ping -c 3 finance2              
 
 # --- 步骤 3: 应用层服务（真实 vsftpd）---
 dorm1 curl http://10.0.60.2/          # HTTP: 访问 Server1 Web
@@ -72,8 +72,8 @@ ls dorm2                              # 查看 dorm2 收到的文件
 # --- 步骤 6: VPN 演示（WireGuard 真实隧道）---
 
 # (A) VPN 关闭时 — 校外隔离
-send home_pc dorm1 VPN测试文件.pdf     # ❌ ACL_EXTERNAL_BLOCK
-send home_pc finance1 VPN测试文件.pdf   # ❌ ACL_EXTERNAL_BLOCK
+send home_pc dorm1 VPN测试文件.pdf     
+send home_pc finance1 VPN测试文件.pdf   
 
 # (B) 查看 home_pc 状态
 py show_identity("home_pc")
@@ -86,16 +86,16 @@ py enable_vpn("home_pc")
 
 # (D) VPN 开启后 — 文件传输
 py show_identity("home_pc")           # 应该显示 VPN IP 10.0.80.10 + 隧道状态
-send home_pc dorm1 VPN测试文件.pdf     # ✅ 通过 wg0 接口访问普通区域
-send home_pc finance1 VPN测试文件.pdf   # ❌ ACL_VPN_DENY（禁止访问敏感区域）
+send home_pc dorm1 VPN测试文件.pdf     
+send home_pc finance1 VPN测试文件.pdf   
 
 # (E) 关闭 VPN
 py disable_vpn("home_pc")
 # 输出: VPN 已断开，身份恢复: HOME_USER
 
 # (F) 验证恢复隔离
-send home_pc dorm1 VPN测试文件.pdf     # ❌ ACL_EXTERNAL_BLOCK
-send home_pc finance1 VPN测试文件.pdf   # ❌ ACL_EXTERNAL_BLOCK
+send home_pc dorm1 VPN测试文件.pdf     
+send home_pc finance1 VPN测试文件.pdf   
 py show_identity("home_pc")           # Tunnel: INACTIVE
 
 # --- 步骤 7: 出口 ---

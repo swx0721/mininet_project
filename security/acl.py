@@ -72,6 +72,12 @@ def apply_acl_policies(r1):
         r1.cmd(f"iptables -A FORWARD -s {src} -d {dst} -j DROP")
         info(f"  [-] {desc}: 阻止+日志\n")
 
+    # --- 默认放通：其他所有校内区域间互访 ---
+    # 黑名单之后追加，确保已被黑名单拦截的流量不会被此规则放行。
+    # 源和目标均在校园网 10.0.0.0/16 范围内的流量全部放通。
+    r1.cmd("iptables -A FORWARD -s 10.0.0.0/16 -d 10.0.0.0/16 -j ACCEPT")
+    info("  [+] 校内区域间默认放通 (10.0.0.0/16 → 10.0.0.0/16)\n")
+
     info("[ACL] ACL 规则已全部生效\n")
 
 

@@ -213,11 +213,7 @@ def enable_vpn(host_name):
 def _enable_real_vpn(net, r1, host_name):
     """真实 WireGuard 隧道模式。"""
     from security.vpn import get_or_create_vpn_manager
-    from security.acl import (
-        remove_external_isolation,      # 旧版（main.py 可能已添加）
-        remove_external_isolation_real, # 新版（双重保险）
-        apply_vpn_acl_real,
-    )
+    from security.acl import apply_vpn_acl_real
 
     print("[VPN] 使用真实 WireGuard 隧道模式...")
 
@@ -229,7 +225,7 @@ def _enable_real_vpn(net, r1, host_name):
     if not server_up or "interface" not in server_up.lower():
         vpn.setup_server()
 
-    # 建立客户端连接
+    # 建立客户端连接（含路由设置）
     vpn.connect_client()
 
     # 验证连通性
@@ -239,10 +235,10 @@ def _enable_real_vpn(net, r1, host_name):
         print("[VPN] ⚠ 隧道已建立但 ping 验证超时（可能需要更长时间握手）")
 
     # ---- 3. 更新 iptables 规则 ----
-    # 清理所有可能的旧版隔离规则（新旧版都清理，确保干净）
-    remove_external_isolation(r1)
-    remove_external_isolation_real(r1)
-    # 应用基于 wg0 接口的 VPN ACL
+    # 注意：不删除外部隔离规则（-s 192.168.100.10 -j DROP）
+    # 外部隔离作为安全兜底：即使 home_pc 流量意外走物理路径，也会被 DROP
+    # WireGuard 加密隧道的流量从 wg0 接口进入，源 IP 为 10.0.80.10，
+    # 不匹配外部隔离规则的 -s 192.168.100.10，因此不受影响
     apply_vpn_acl_real(r1)
 
     vpn_ip = vpn.get_client_vpn_ip()
@@ -297,22 +293,17 @@ def _disable_real_vpn(host_name):
         return
 
     from security.vpn import get_or_create_vpn_manager
-    from security.acl import (
-        remove_vpn_acl, remove_vpn_acl_real,
-        apply_external_isolation,
-    )
+    from security.acl import remove_vpn_acl, remove_vpn_acl_real
 
     r1 = net.get("r1")
     vpn = get_or_create_vpn_manager(net)
 
-    # 断开客户端隧道
+    # 断开客户端隧道（含路由删除）
     vpn.disconnect_client()
 
-    # 清理所有 VPN ACL 规则（新旧版都清理）
+    # 清理 VPN ACL 规则（外部隔离未被删除，无需重新添加）
     remove_vpn_acl(r1)
     remove_vpn_acl_real(r1)
-    # 恢复物理链路隔离
-    apply_external_isolation(r1)
 
 
 def _disable_simulated_vpn(host_name):

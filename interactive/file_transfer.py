@@ -118,10 +118,10 @@ def transfer_file(src_name, dst_name, filename):
     print(f"{'=' * 50}")
 
     # 接收方监听（在其网络命名空间中绑定 IP）
-    dst_host.cmd("kill $(pgrep -f 'nc -l -p 9999') 2>/dev/null; true")
+    dst_host.cmd("kill $(pgrep -f 'nc.*9999') 2>/dev/null; true")
     time.sleep(0.1)
-    dst_host.cmd(f"nc -l -p 9999 > {tmp_recv} &")
-    time.sleep(0.3)
+    dst_host.cmd(f"nc -l 9999 > {tmp_recv} &")
+    time.sleep(0.5)
 
     # 发送方通过真实网络拓扑发送
     md5_before = _md5(src_file)
